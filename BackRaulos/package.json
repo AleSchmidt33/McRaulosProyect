@@ -1,0 +1,22 @@
+{
+    "name": "autoservicio-burgers-api",
+    "version": "1.0.0",
+    "description": "API REST para autoservicio de hamburguesas",
+    "main": "index.js",
+    "type": "module",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js"
+    },
+    "dependencies": {
+        "@mercadopago/sdk-js": "^0.0.3",
+        "cors": "^2.8.5",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+        "mercadopago": "^2.8.0",
+        "postgres": "^3.4.3"
+    },
+    "devDependencies": {
+        "nodemon": "^3.0.2"
+    }
+}
