@@ -39,13 +39,14 @@ export default function ExtrasScreen({ selectedType, onBack }) {
           productos = Object.values(data.productos);
         }
 
-        const list = (productos || []).map((p, i) => ({
-          id: p.id_producto ?? p.id ?? p._id ?? i,
-          nombre: p.nombre ?? p.name ?? "Producto",
-          precio: p.precio ?? p.price ?? 0,
-          descripcion: p.descripcion ?? p.description ?? "",
-          imagen: p.imagen ?? p.image ?? null,
-        }));
+       const list = (productos || []).map((p, i) => ({
+  id: p.id_producto ?? p.id ?? p._id ?? i,
+  nombre: p.nombre ?? p.name ?? "Producto",
+  precio: p.precio ?? p.precio_base ?? p.price ?? 0,
+  descripcion: p.descripcion ?? p.description ?? "",
+  imagen: p.imagen ?? p.imagen_url ?? p.url_imagen ?? p.image_url ?? p.image ?? p.foto ?? null,
+}));
+
 
         if (alive) setItems(list);
       } catch (e) {
@@ -76,7 +77,12 @@ export default function ExtrasScreen({ selectedType, onBack }) {
           </div>
         </div>
 
-        {loading && <p className="text-white/90">Cargando extras…</p>}
+        {loading && (
+        <div className="flex items-center gap-2 p-2">
+         <Spinner className="text-gray-700" size={24} border={3} label="Cargando…" />
+        <span className="text-gray-700">Cargando…</span>
+       </div>
+        )}
         {err && (
           <div className="bg-white/90 text-red-700 border border-red-200 rounded-xl p-3 mb-4">
             Error: {err}

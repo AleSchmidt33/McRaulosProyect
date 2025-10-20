@@ -44,13 +44,16 @@ export default function HamburgersScreen({ selectedType, onBack }) {
         }
 
         // Normalizamos claves
-        const list = (productos || []).map((p, i) => ({
-          id: p.id_producto ?? p.id ?? p._id ?? i,
-          nombre: p.nombre ?? p.name ?? "Producto",
-          precio: p.precio ?? p.price ?? 0,
-          descripcion: p.descripcion ?? p.description ?? "",
-          imagen: p.imagen ?? p.image ?? null,
-        }));
+       const list = (productos || []).map((p, i) => ({
+  id: p.id_producto ?? p.id ?? p._id ?? i,
+  nombre: p.nombre ?? p.name ?? "Producto",
+  // 👇 ahora toma precio_base si no viene precio
+  precio: p.precio ?? p.precio_base ?? p.price ?? 0,
+  descripcion: p.descripcion ?? p.description ?? "",
+  // 👇 acepta varios nombres de columna para la URL de imagen
+  imagen: p.imagen ?? p.imagen_url ?? p.url_imagen ?? p.image_url ?? p.image ?? p.foto ?? null,
+}));
+
 
         if (alive) setItems(list);
       } catch (e) {
@@ -83,7 +86,12 @@ export default function HamburgersScreen({ selectedType, onBack }) {
           </div>
         </div>
 
-        {loading && <p className="text-white/90">Cargando hamburguesas…</p>}
+        {loading  && (
+        <div className="flex items-center gap-2 p-2">
+         <Spinner className="text-gray-700" size={24} border={3} label="Cargando…" />
+        <span className="text-gray-700">Cargando…</span>
+       </div>
+        )}
         {err && (
           <div className="bg-white/90 text-red-700 border border-red-200 rounded-xl p-3 mb-4">
             Error: {err}
@@ -104,9 +112,16 @@ export default function HamburgersScreen({ selectedType, onBack }) {
                 <span className="font-bold">
                   {Number(p.precio).toLocaleString("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 })}
                 </span>
-                <button className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700">
+                  import { addItem } from "../lib/cart"; // ajustar la ruta si hace falta
+
+                // y el botón:
+                <button
+                 onClick={() => addItem(p, 1)}
+                className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700"
+                >
                   Agregar
                 </button>
+               
               </div>
             </div>
           ))}
