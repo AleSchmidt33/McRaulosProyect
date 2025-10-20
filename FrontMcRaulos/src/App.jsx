@@ -1,5 +1,6 @@
-import { useState } from "react";
-import StampBackground from "./components/StampBackground.jsx";
+// src/App.jsx
+import React, { useState } from "react";
+import StampBackground from "./components/StampBackground.jsx"; // <-- A) Import fondo
 import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import MenuScreen from "./components/MenuScreen.jsx";
 import HamburgersScreen from "./components/HamburgersScreen.jsx";
@@ -9,16 +10,19 @@ import CartButton from "./components/CartButton.jsx";
 import CartPanel from "./components/CartPanel.jsx";
 import LoadingOverlay from "./components/LoadingOverlay.jsx";
 import CheckoutScreen from "./components/CheckoutScreen.jsx";
+import PayScreen from "./components/PayScreen.jsx";
 
 export default function App() {
-  const [screen, setScreen] = useState("welcome"); // 'welcome' | 'menu' | 'hamburgers' | 'bebidas' | 'extras' | 'checkout'
+  // 'welcome' | 'menu' | 'hamburgers' | 'bebidas' | 'extras' | 'checkout' | 'pay'
+  const [screen, setScreen] = useState("welcome");
   const [selectedType, setSelectedType] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [globalLoading, setGlobalLoading] = useState(false);
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      <StampBackground base="#C8102E" stamp="#FFD300" opacity={0.25} size={48} rotate={-8} />
+    <div className="relative min-h-screen">
+      <StampBackground /> {/* <-- B) Pintar fondo */}
+
       <div className="relative z-10">
         {screen === "welcome" && (
           <WelcomeScreen onContinue={() => setScreen("menu")} />
@@ -47,16 +51,16 @@ export default function App() {
         {screen === "checkout" && (
           <CheckoutScreen
             onBack={() => setScreen("menu")}
-            onPay={() => {
-              // Acá vas a integrar el pago real (por ejemplo /mp/link)
-              console.log("Ir a pagar");
-              // luego podés redirigir o abrir un link de pago
-            }}
+            onPay={() => setScreen("pay")}
           />
+        )}
+
+        {screen === "pay" && (
+          <PayScreen onBack={() => setScreen("checkout")} />
         )}
       </div>
 
-      {/* Botón y panel del carrito: ahora conduce a 'checkout' */}
+      {/* Carrito flotante */}
       <CartButton onClick={() => setCartOpen(true)} />
       <CartPanel
         open={cartOpen}
