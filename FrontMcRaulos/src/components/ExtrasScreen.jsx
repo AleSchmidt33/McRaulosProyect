@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import React from "react";
+
 
 // Usa el endpoint existente:
 // GET /productos/tipo_productos/:id_tipo_producto

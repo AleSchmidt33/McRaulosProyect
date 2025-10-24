@@ -1,4 +1,55 @@
 // src/lib/cart.js
+
+// Convierte el carrito a payload del backend (solo extras + remociones)
+export function toBackendOrderPayload(orderType = "comer-aca") {
+  const items = readCart();
+
+  const id_tipo_pedido = orderType === "para-llevar" ? 2 : 1;
+
+  const productos = items.map((it) => {
+    const id_producto = it.id ?? it.id_producto ?? it._id;
+    const personalizados = [];
+
+    const list = it.custom?.ingredients || [];
+    for (const ing of list) {
+      const idIng = ing.id_ingrediente ?? ing.id;
+      const qty = Number(ing.qty || 0);
+
+      if (qty === 0) {
+        // remover base
+        personalizados.push({
+          id_ingrediente: idIng,
+          cantidad: 1,
+          es_extra: false,
+        });
+      } else if (qty > 1) {
+        // solo el excedente como extra
+        personalizados.push({
+          id_ingrediente: idIng,
+          cantidad: qty - 1,
+          es_extra: true,
+        });
+      }
+      // qty === 1 -> base normal, no mandar nada
+    }
+
+    return {
+      id_producto,
+      ingredientes_personalizados: personalizados,
+      // notas: it.custom?.note || undefined, // por si después querés anotar algo
+    };
+  });
+
+  return {
+    id_tipo_pedido,
+    productos,
+    pago: {
+      id_tipo_pago: 1,
+      descripcion: "Pago con tarjeta de crédito",
+    },
+  };
+}
+
 export const CART_KEY = "mcraulos_cart_v1";
 
 function genUid() {

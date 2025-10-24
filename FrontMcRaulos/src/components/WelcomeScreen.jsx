@@ -1,63 +1,73 @@
-import React, { useState } from 'react';
-
-const OPTIONS = [
-  { id: 'comer-aca',   label: 'Comer acá',   emoji: '🍽️' },
-  { id: 'para-llevar', label: 'Para llevar', emoji: '🛍️' },
-];
+// src/components/WelcomeScreen.jsx
+// ⬇️ Reemplazá TODO lo que haya de imports por SOLO esta línea
+import { useState, useCallback } from "react";
 
 export default function WelcomeScreen({ onContinue }) {
-  const [selected, setSelected] = useState(null);
+  const [mode, setMode] = useState(
+    () => localStorage.getItem("orderType") || "comer-aca"
+  );
 
-  const handleContinue = () => {
-    if (!selected) return;
-    // guardamos elección por si la segunda pantalla la necesita
-    localStorage.setItem('orderType', selected);
-    onContinue?.(selected);
+  const handleContinue = useCallback((e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    try {
+      localStorage.setItem("orderType", mode);
+    } catch {}
+    if (typeof onContinue === "function") {
+      onContinue();
+    } else {
+      // Fallback por si no te llega la prop
+      window.dispatchEvent(new CustomEvent("mcraulos:go-menu"));
+    }
+  }, [mode, onContinue]);
+
+  const Option = ({ value, emoji, label }) => {
+    const active = mode === value;
+    return (
+      <button
+        type="button"
+        onClick={() => setMode(value)}
+        className={[
+          "w-full text-left px-5 py-4 rounded-2xl border transition",
+          "flex items-center gap-3 select-none",
+          active
+            ? "border-red-400 ring-2 ring-red-300"
+            : "border-gray-200 hover:border-gray-300",
+        ].join(" ")}
+      >
+        <span className="text-2xl">{emoji}</span>
+        <span className="font-semibold">{label}</span>
+      </button>
+    );
   };
 
   return (
-    <div className="min-h-screen">
-      <div className="max-w-md mx-auto px-4 py-10">
-        <div className="bg-white/95 backdrop-blur rounded-3xl shadow-xl border border-white/40 p-8">
-          <div className="flex items-center justify-center gap-3 mb-6">
-            <div className="w-12 h-12 rounded-full overflow-hidden shadow">
-              <div className="w-full h-full bg-orange-400 flex items-center justify-center text-white font-bold text-lg">🍔</div>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-800">McRaulos</h1>
+    <div className="min-h-screen w-full flex items-center justify-center bg-neutral-50">
+      <div className="w-full max-w-md px-6">
+        <div className="bg-white rounded-2xl shadow-xl p-8">
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-2xl">🍔</span>
+            <h1 className="text-2xl font-semibold">McRaulos</h1>
           </div>
 
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-extrabold text-gray-900 mb-2">¡Bienvenido!</h2>
-            <p className="text-gray-700">¿Cómo preferís disfrutar tu comida?</p>
+          <h2 className="text-3xl font-extrabold mb-2">¡Bienvenido!</h2>
+          <p className="text-gray-600 mb-6">
+            ¿Cómo preferís disfrutar tu comida?
+          </p>
+
+          <div className="space-y-4">
+            <Option value="comer-aca" emoji="🍽️" label="Comer acá" />
+            <Option value="para-llevar" emoji="🛍️" label="Para llevar" />
           </div>
 
-          <div className="flex flex-col gap-3">
-            {OPTIONS.map(opt => (
-              <button
-                key={opt.id}
-                onClick={() => setSelected(opt.id)}
-                className={
-                  "w-full rounded-2xl border p-5 text-left shadow-sm hover:shadow transition bg-white " +
-                  (selected === opt.id ? "border-red-600 ring-2 ring-red-600/40" : "border-gray-200")
-                }
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-3xl">{opt.emoji}</span>
-                  <span className="text-lg font-semibold text-gray-900">{opt.label}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-8 text-center">
-            <button
-              onClick={handleContinue}
-              disabled={!selected}
-              className={`px-6 py-3 rounded-xl font-semibold ${selected ? "bg-red-600 text-white hover:bg-red-700" : "bg-gray-300 text-gray-600 cursor-not-allowed"}`}
-            >
-              Continuar
-            </button>
-          </div>
+          <button
+            id="continue-btn"
+            type="button"
+            onClick={handleContinue}
+            className="mt-6 w-full rounded-xl py-3 font-semibold bg-red-700 text-white hover:bg-red-800 active:scale-[.98] focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            Continuar
+          </button>
         </div>
       </div>
     </div>

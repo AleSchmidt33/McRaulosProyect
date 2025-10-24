@@ -1,4 +1,6 @@
 // src/components/LoadingOverlay.jsx
+import React from "react";
+
 import Spinner from "./Spinner.jsx";
 
 export default function LoadingOverlay({ show, text = "Cargando…" }) {
