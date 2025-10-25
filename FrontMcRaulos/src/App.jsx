@@ -1,153 +1,98 @@
-import { useState } from "react";
-import StampBackground from "./components/StampBackground.jsx";
+import { useEffect, useState } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
+
+// 👉 tu estampa ORIGINAL (no la toco)
+import StampBackground from "./components/StampBackground";
+
+// tus componentes (todo en components/)
 import WelcomeScreen from "./components/WelcomeScreen.jsx";
 import MenuScreen from "./components/MenuScreen.jsx";
-import HamburgersScreen from "./components/HamburgersScreen.jsx";
-import BebidasScreen from "./components/BebidasScreen.jsx";
-import ExtrasScreen from "./components/ExtrasScreen.jsx";
-import CartButton from "./components/CartButton.jsx";
-import CartPanel from "./components/CartPanel.jsx";
-import LoadingOverlay from "./components/LoadingOverlay.jsx";
 import CheckoutScreen from "./components/CheckoutScreen.jsx";
 import PayScreen from "./components/PayScreen.jsx";
+import CartPanel from "./components/CartPanel.jsx";
+import CartButton from "./components/CartButton.jsx";
 
+import { goTo } from "./lib/navbus"; // util de navegación sin hooks
 
 export default function App() {
-  const [screen, setScreen] = useState("welcome"); // 'welcome' | 'menu' | 'hamburgers' | 'bebidas' | 'extras' | 'checkout'
-  const [selectedType, setSelectedType] = useState(null);
   const [cartOpen, setCartOpen] = useState(false);
-  const [globalLoading, setGlobalLoading] = useState(false);
 
-  // 👉 Helper mínimo para pagar SIN tocar tu UI
-  async function handlePay() {
-    try {
-      setGlobalLoading(true);
+  // ✅ Fallback de navegación sin cambiar tu UI:
+  // - En "/" si tocás "Continuar" → /menu
+  // - En cualquier pantalla si tocás "Volver/Inicio/Welcome" → /
+  useEffect(() => {
+    const handler = (e) => {
+      const el = e.target?.closest?.(
+        "button, a, [role='button'], [data-nav], [data-goto]"
+      );
+      if (!el) return;
 
-      // 1) Leo carrito y modalidad (como ya los usa tu Checkout)
-      const items = JSON.parse(localStorage.getItem("mcraulos_cart_v1") || "[]");
-      const orderType = localStorage.getItem("orderType") || "comer-aca";
+      const text = (el.textContent || "").trim().toLowerCase();
+      const id = (el.id || "").toLowerCase();
+      const data = (
+        el.getAttribute("data-nav") ||
+        el.getAttribute("data-goto") ||
+        ""
+      ).toLowerCase();
 
-      // 2) Armo payload simple para el endpoint /mp/link del back
-      const mpItems = (items || []).map((it) => ({
-        title: String(it?.nombre ?? it?.name ?? "Producto"),
-        quantity: Number(it?.qty ?? 1),
-        unit_price: Number(it?.precio ?? it?.price ?? 0),
-        currency_id: "ARS",
-      }));
-      const total = mpItems.reduce((a, i) => a + i.quantity * i.unit_price, 0);
-      const backUrl = location.origin;
-      const payload = {
-        items: mpItems,
-        orderType,
-        total,
-        back_urls: {
-          success: `${backUrl}/?pago=ok`,
-          failure: `${backUrl}/?pago=fail`,
-          pending: `${backUrl}/?pago=pending`,
-        },
-        auto_return: "approved",
-      };
+      const atRoot = window.location.pathname === "/" ||
+                     window.location.pathname === "/index.html";
 
-      // 3) Intento 1: proxy de Vite (/mp/link). Si no lo tenés, cae al fallback.
-      async function postJson(url) {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const text = await res.text();
-        let json = {};
-        try { json = text ? JSON.parse(text) : {}; } catch {}
-        if (!res.ok) {
-          const msg = json?.error || json?.message || `HTTP ${res.status} - ${text}`;
-          throw new Error(msg);
-        }
-        return json;
+      // Continuar -> /menu (solo en la pantalla de bienvenida)
+      if (
+        atRoot &&
+        (id === "continuar" ||
+          data === "menu" ||
+          text === "continuar" ||
+          text.includes("continuar"))
+      ) {
+        e.preventDefault?.();
+        e.stopPropagation?.();
+        goTo("/menu");
+        return;
       }
 
-      let data;
-      try {
-        data = await postJson("/mp/link");
-      } catch {
-        // 4) Fallback: pega directo al backend si definiste VITE_BACK_ORIGIN (solo FRONT)
-        const BACK_ORIGIN = (import.meta.env.VITE_BACK_ORIGIN || "").replace(/\/$/, "");
-        if (!BACK_ORIGIN) throw new Error("No se pudo generar el link (configurá /mp proxy o VITE_BACK_ORIGIN).");
-        data = await postJson(`${BACK_ORIGIN}/mp/link`);
+      // Volver / Inicio / Welcome -> /
+      if (
+        id === "volver" ||
+        data === "home" ||
+        data === "welcome" ||
+        text === "volver" ||
+        text.includes("volver al inicio") ||
+        text.includes("inicio") ||
+        text.includes("welcome")
+      ) {
+        e.preventDefault?.();
+        e.stopPropagation?.();
+        goTo("/");
+        return;
       }
+    };
 
-      const payUrl =
-        data?.init_point ||
-        data?.sandbox_init_point ||
-        data?.url ||
-        data?.data?.init_point ||
-        data?.data?.sandbox_init_point ||
-        data?.data?.url;
-
-      if (!payUrl) throw new Error("El backend no devolvió un link de pago válido.");
-
-      // 5) Redirijo al flujo de pago
-      window.location.href = payUrl;
-    } catch (e) {
-      console.error(e);
-      alert(`No pudimos generar el link de pago: ${e.message || e}`);
-    } finally {
-      setGlobalLoading(false);
-    }
-  }
+    // capture = true para ganar prioridad si hay otros onClick
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
+  }, []);
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      <StampBackground base="#C8102E" stamp="#FFD300" opacity={0.25} size={48} rotate={-8} />
-      <div className="relative z-10">
-        {screen === "welcome" && (
-          <WelcomeScreen onContinue={() => setScreen("menu")} />
-        )}
-
-        {screen === "menu" && (
-          <MenuScreen
-            onBack={() => setScreen("welcome")}
-            setGlobalLoading={setGlobalLoading}
-            onOpenHamburgers={(tipo) => { setSelectedType(tipo); setScreen("hamburgers"); }}
-            onOpenBebidas={(tipo) => { setSelectedType(tipo); setScreen("bebidas"); }}
-            onOpenExtras={(tipo) => { setSelectedType(tipo); setScreen("extras"); }}
-          />
-        )}
-
-        {screen === "hamburgers" && (
-          <HamburgersScreen selectedType={selectedType} onBack={() => setScreen("menu")} />
-        )}
-        {screen === "bebidas" && (
-          <BebidasScreen selectedType={selectedType} onBack={() => setScreen("menu")} />
-        )}
-        {screen === "extras" && (
-          <ExtrasScreen selectedType={selectedType} onBack={() => setScreen("menu")} />
-        )}
-        {screen === "checkout" && (
-          // 🔴 UI intacta: solo conectamos onPay
-          <CheckoutScreen
-            onBack={() => setScreen("menu")}
-             onPay={() => setScreen("pay")}  
-          />
-        )}
-        {screen === "pay" && (
-  <PayScreen
-    onBack={() => setScreen("checkout")}
-     onDone={() => setScreen("welcome")}   // 👈 volver a la pantalla inicial
-    setGlobalLoading={setGlobalLoading}
-  />
-)}
-
+    <div className="relative min-h-screen">
+      {/* 🎨 Estampa global detrás de todo y sin bloquear clics */}
+      <div className="pointer-events-none absolute inset-0 -z-50">
+        <StampBackground />
       </div>
 
-      {/* Botón y panel del carrito: conduce a 'checkout' */}
-      <CartButton onClick={() => setCartOpen(true)} />
-      <CartPanel
-        open={cartOpen}
-        onClose={() => setCartOpen(false)}
-        onFinish={() => { setCartOpen(false); setScreen("checkout"); }}
-      />
+      {/* Rutas (tu UI intacta) */}
+      <Routes>
+        <Route path="/" element={<WelcomeScreen />} />
+        <Route path="/menu" element={<MenuScreen />} />
+        <Route path="/checkout" element={<CheckoutScreen />} />
+        <Route path="/pay" element={<PayScreen />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
 
-      <LoadingOverlay show={globalLoading} text="Cargando…" />
+      {/* Carrito global (sin cambios) */}
+      <CartPanel open={cartOpen} onClose={() => setCartOpen(false)} />
+      <CartButton onClick={() => setCartOpen(true)} />
     </div>
   );
 }

@@ -1,24 +1,35 @@
-// src/components/CartButton.jsx
 import { useEffect, useState } from "react";
-import { countItems } from "../lib/cart";
+import { getCartCount, subscribeCart } from "../lib/cart";
 
 export default function CartButton({ onClick }) {
-  const [count, setCount] = useState(countItems());
+  const [count, setCount] = useState(0);
+  const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
-    const handler = () => setCount(countItems());
-    window.addEventListener("cart:update", handler);
-    handler(); // actualizar al montar
-    return () => window.removeEventListener("cart:update", handler);
+    setCount(getCartCount());
+    const unsub = subscribeCart(() => setCount(getCartCount()));
+    return () => unsub && unsub();
   }, []);
+
+  useEffect(() => {
+    const update = () => setHidden(document.body.classList.contains("cart-open"));
+    update();
+    const obs = new MutationObserver(update);
+    obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+
+  if (hidden) return null;
 
   return (
     <button
+      className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2 rounded-full bg-yellow-400 px-4 py-3 font-semibold shadow-lg hover:bg-yellow-500 focus:outline-none focus:ring-2 focus:ring-black/20"
       onClick={onClick}
-      className="fixed right-4 bottom-4 z-50 rounded-full shadow-lg bg-yellow-400 hover:bg-yellow-500 text-gray-900 px-5 py-3 font-semibold flex items-center gap-2"
+      aria-label="Abrir carrito"
+      title="Abrir carrito"
     >
-      🛒 Carrito
-      <span className="ml-1 inline-flex items-center justify-center min-w-6 h-6 px-2 rounded-full bg-white text-gray-900 text-sm font-bold">
+      🛒 <span>¡Carrito!</span>
+      <span className="ml-1 rounded-full bg-white px-2 py-0.5 text-sm">
         {count}
       </span>
     </button>

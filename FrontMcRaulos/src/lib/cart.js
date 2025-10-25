@@ -1,168 +1,147 @@
-// src/lib/cart.js
+// =================== Cart util - McRaulos ===================
 
-// Convierte el carrito a payload del backend (solo extras + remociones)
-export function toBackendOrderPayload(orderType = "comer-aca") {
-  const items = readCart();
+const KEY = "mcraulos_cart_v1";
+const CART_EVENT = "mcraulos:cart-changed";
 
-  const id_tipo_pedido = orderType === "para-llevar" ? 2 : 1;
+// -------- helpers --------
+const safeNumber = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
 
-  const productos = items.map((it) => {
-    const id_producto = it.id ?? it.id_producto ?? it._id;
-    const personalizados = [];
+const genUid = () =>
+  "it" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 
-    const list = it.custom?.ingredients || [];
-    for (const ing of list) {
-      const idIng = ing.id_ingrediente ?? ing.id;
-      const qty = Number(ing.qty || 0);
-
-      if (qty === 0) {
-        // remover base
-        personalizados.push({
-          id_ingrediente: idIng,
-          cantidad: 1,
-          es_extra: false,
-        });
-      } else if (qty > 1) {
-        // solo el excedente como extra
-        personalizados.push({
-          id_ingrediente: idIng,
-          cantidad: qty - 1,
-          es_extra: true,
-        });
-      }
-      // qty === 1 -> base normal, no mandar nada
-    }
-
-    return {
-      id_producto,
-      ingredientes_personalizados: personalizados,
-      // notas: it.custom?.note || undefined, // por si después querés anotar algo
-    };
-  });
-
-  return {
-    id_tipo_pedido,
-    productos,
-    pago: {
-      id_tipo_pago: 1,
-      descripcion: "Pago con tarjeta de crédito",
-    },
-  };
-}
-
-export const CART_KEY = "mcraulos_cart_v1";
-
-function genUid() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// === Lectura / Escritura ===
-export function readCart() {
+const notify = () => {
   try {
-    const raw = localStorage.getItem(CART_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
+    window.dispatchEvent(new Event(CART_EVENT));
+  } catch { /* no-op */ }
+};
+
+// -------- base I/O --------
+export const readCart = () => {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
     return Array.isArray(arr) ? arr : [];
   } catch {
     return [];
   }
-}
+};
 
-export function writeCart(items) {
-  localStorage.setItem(CART_KEY, JSON.stringify(items || []));
-  window.dispatchEvent(new CustomEvent("cart:update", { detail: items || [] }));
-}
+export const writeCart = (items) => {
+  // NO llama a readCart: evita recursión
+  const arr = Array.isArray(items) ? items : [];
+  localStorage.setItem(KEY, JSON.stringify(arr));
+  notify();
+};
 
-// === Totales ===
-export function countItems() {
-  return readCart().reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
-}
+// -------- normalización --------
+const normalizeProduct = (prod, qty = 1) => {
+  if (!prod || typeof prod !== "object") return null;
 
-export function subtotal() {
-  return readCart().reduce((acc, it) => {
-    const precio = Number(it.precio) || 0;
-    const qty = Number(it.qty) || 0;
-    return acc + precio * qty;
-  }, 0);
-}
-
-// Normaliza producto base
-function normalizeProduct(prod, qty = 1) {
-  const id = prod.id ?? prod.id_producto ?? prod._id;
-  const nombre = prod.nombre ?? prod.name ?? "Producto";
-  const precio = Number(prod.precio ?? prod.precio_base ?? prod.price ?? 0) || 0;
-  const imagen =
-    prod.imagen ??
-    prod.imagen_url ??
-    prod.url_imagen ??
-    prod.image_url ??
-    prod.image ??
-    prod.foto ??
+  const id =
+    prod.id ??
+    prod.id_producto ??
+    prod.producto_id ??
+    prod.productoId ??
     null;
 
-  return { id, nombre, precio, imagen, qty: Number(qty || 1) };
-}
+  const nombre = prod.nombre ?? prod.name ?? prod.titulo ?? "Producto";
 
-// === Agregar estándar (SIN custom) -> mergea por id ===
-export function addItem(prod, qty = 1) {
-  if (!prod) return;
+  const precioUnit = safeNumber(
+    prod.precio ?? prod.precio_unit ?? prod.precio_unitario ?? prod.price ?? 0,
+    0
+  );
+
+  const cantidad = Math.max(1, safeNumber(qty, 1));
+  const subtotal = precioUnit * cantidad;
+
+  return { id, nombre, precio: precioUnit, qty: cantidad, subtotal };
+};
+
+const deriveExtras = (custom) => {
+  const arr = Array.isArray(custom?.ingredients) ? custom.ingredients : [];
+  return arr
+    .filter((x) => safeNumber(x.qty, 1) > 1)
+    .map((x) => ({
+      id_ingrediente: x.id ?? x.id_ingrediente ?? null,
+      nombre: x.nombre ?? x.name ?? "Ingrediente",
+      cantidad: safeNumber(x.qty, 2) - 1, // solo lo adicional
+    }));
+};
+
+// -------- API del carrito --------
+export const addItem = (prod, qty = 1) => {
   const base = normalizeProduct(prod, qty);
-  if (base.id == null) return;
+  if (!base) return null;
 
+  const item = { ...base, uid: genUid(), custom: null, extras: null };
   const items = readCart();
-  // merge SOLO si NO tiene custom (estándar)
-  const idx = items.findIndex((x) => String(x.id) === String(base.id) && !x.custom && !x.uid);
-  if (idx >= 0) {
-    items[idx].qty = Number(items[idx].qty || 0) + Number(base.qty || 1);
-  } else {
-    items.push(base);
-  }
+  items.push(item);
   writeCart(items);
-}
+  return item;
+};
 
-// === Agregar personalizado (CON custom) -> NUNCA mergea ===
-export function addCustomItem(prod, custom, qty = 1) {
-  if (!prod) return;
+// Guarda aunque tenga modificaciones; mantiene custom y agrega extras separados
+export const addCustomItem = (prod, custom, qty = 1) => {
   const base = normalizeProduct(prod, qty);
-  if (base.id == null) return;
+  if (!base) return null;
 
+  const extras = deriveExtras(custom);
   const item = {
     ...base,
-    uid: genUid(),     // ID único para NO mergear
-    custom: custom || null,
+    uid: genUid(),
+    custom: custom && typeof custom === "object" ? custom : null,
+    extras: extras.length ? extras : null,
   };
 
   const items = readCart();
   items.push(item);
   writeCart(items);
-}
+  return item;
+};
 
-// Helpers para encontrar por uid o id
-function findIndexByIdOrUid(items, idOrUid) {
-  const s = String(idOrUid);
-  let idx = items.findIndex((x) => x.uid && String(x.uid) === s);
-  if (idx === -1) idx = items.findIndex((x) => String(x.id) === s);
-  return idx;
-}
-
-// Cambiar cantidad directa (acepta uid o id)
-export function setQty(idOrUid, qty) {
+export const updateQty = (uid, qty) => {
   const items = readCart();
-  const idx = findIndexByIdOrUid(items, idOrUid);
-  if (idx >= 0) {
-    const n = Math.max(1, Number(qty) || 1);
-    items[idx].qty = n;
-    writeCart(items);
-  }
-}
+  const i = items.findIndex((x) => x.uid === uid);
+  if (i === -1) return;
 
-// Quitar ítem (acepta uid o id)
-export function removeItem(idOrUid) {
-  const s = String(idOrUid);
-  const items = readCart().filter((x) => (x.uid ? String(x.uid) !== s : String(x.id) !== s));
+  const q = Math.max(1, safeNumber(qty, 1));
+  items[i].qty = q;
+  items[i].subtotal = safeNumber(items[i].precio, 0) * q;
   writeCart(items);
-}
+};
 
-// Vaciar
-export function clearCart() {
-  writeCart([]);
-}
+export const removeItem = (uid) => {
+  const items = readCart().filter((x) => x.uid !== uid);
+  writeCart(items);
+};
+
+export const clearCart = () => writeCart([]);
+
+export const getCartCount = () =>
+  readCart().reduce((acc, it) => acc + safeNumber(it.qty, 1), 0);
+
+// alias por compatibilidad con código previo
+export const countItems = getCartCount;
+
+export const getCartTotal = () =>
+  readCart().reduce((acc, it) => acc + safeNumber(it.subtotal, 0), 0);
+
+// ✅ alias requerido por CheckoutScreen
+export const subtotal = getCartTotal;
+
+// Por si algún componente quiere items crudos
+export const getCartItems = readCart;
+
+export const subscribeCart = (fn) => {
+  const handler = () => fn(readCart());
+  window.addEventListener(CART_EVENT, handler);
+  window.addEventListener("storage", handler); // cross-tab
+  return () => {
+    window.removeEventListener(CART_EVENT, handler);
+    window.removeEventListener("storage", handler);
+  };
+};

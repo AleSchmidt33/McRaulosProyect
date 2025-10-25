@@ -1,300 +1,179 @@
-// src/components/CartPanel.jsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  readCart,
+  updateQty,
+  removeItem,
+  clearCart,
+  getCartTotal,
+} from "../lib/cart";
+import { goTo } from "../lib/navbus";
 
-const CART_KEY = "mcraulos_cart_v1";
+export default function CartPanel({ open, onClose }) {
+  const [items, setItems] = useState([]);
 
-function readCart() {
-  try {
-    const raw = localStorage.getItem(CART_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeCart(items) {
-  try {
-    localStorage.setItem(CART_KEY, JSON.stringify(items || []));
-    // notificar por si otras pantallas escuchan
-    window.dispatchEvent(new Event("cart:update"));
-  } catch {}
-}
-
-// 👉 Junta modificaciones desde distintos formatos (extras/removidos/custom.ingredients)
-function getMods(it) {
-  const extras = [];
-  const removed = [];
-
-  // extras/removidos planos
-  if (Array.isArray(it?.extras)) {
-    for (const ex of it.extras) {
-      const name = ex?.nombre ?? ex?.name ?? ex;
-      const qty = Number(ex?.qty ?? 1);
-      if (name && qty > 0) extras.push(qty > 1 ? `${name} x${qty}` : `${name}`);
-    }
-  }
-  if (Array.isArray(it?.removidos)) {
-    for (const rm of it.removidos) {
-      const name = rm?.nombre ?? rm?.name ?? rm;
-      if (name) removed.push(`${name}`);
-    }
-  }
-
-  // custom.ingredients con qty: 0 -> removido, >1 -> extra
-  const ings = it?.custom?.ingredients;
-  if (Array.isArray(ings)) {
-    for (const ing of ings) {
-      const name = ing?.nombre ?? ing?.name ?? ing?.label ?? "";
-      const qty = Number(ing?.qty);
-      if (!name) continue;
-      if (qty === 0) removed.push(name);
-      else if (qty > 1) extras.push(`${name} x${qty}`);
-    }
-  }
-
-  // De-duplicar manteniendo orden
-  const dedup = (arr) => [...new Set(arr.filter(Boolean))];
-  return {
-    extras: dedup(extras),
-    removed: dedup(removed),
-    hasChanges: extras.length > 0 || removed.length > 0,
-  };
-}
-
-export default function CartPanel({ open, onClose, onFinish }) {
-  const [items, setItems] = useState(() => readCart());
-
-  // Refrescar al abrir y en cambios de storage
+  // Carga / escucha cambios del carrito
   useEffect(() => {
-    if (open) setItems(readCart());
+    const load = () => setItems(readCart());
+    load();
+    const handler = () => load();
+    window.addEventListener("storage", handler);
+    window.addEventListener("mcraulos:cart-changed", handler);
+    return () => {
+      window.removeEventListener("storage", handler);
+      window.removeEventListener("mcraulos:cart-changed", handler);
+    };
+  }, []);
+
+  // Ocultar botón carrito cuando el panel está abierto
+  useEffect(() => {
+    const cls = "cart-open";
+    const flag = typeof open === "boolean" ? open : true;
+    if (flag) document.body.classList.add(cls);
+    else document.body.classList.remove(cls);
+    return () => document.body.classList.remove(cls);
   }, [open]);
 
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === CART_KEY) setItems(readCart());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  const total = useMemo(() => getCartTotal(), [items]);
 
-  // Acciones
-  const increase = useCallback((idx) => {
-    setItems((prev) => {
-      const copy = [...prev];
-      const cur = copy[idx] ?? {};
-      copy[idx] = { ...cur, qty: Math.max(1, Number(cur?.qty || 1) + 1) };
-      writeCart(copy);
-      return copy;
-    });
-  }, []);
+  const onInc = (uid) => {
+    const item = items.find((x) => x.uid === uid);
+    if (!item) return;
+    updateQty(uid, Number(item.qty || 1) + 1);
+    setItems(readCart());
+  };
 
-  const decrease = useCallback((idx) => {
-    setItems((prev) => {
-      const copy = [...prev];
-      const cur = copy[idx] ?? {};
-      copy[idx] = { ...cur, qty: Math.max(1, Number(cur?.qty || 1) - 1) };
-      writeCart(copy);
-      return copy;
-    });
-  }, []);
+  const onDec = (uid) => {
+    const item = items.find((x) => x.uid === uid);
+    if (!item) return;
+    const next = Math.max(1, Number(item.qty || 1) - 1);
+    updateQty(uid, next);
+    setItems(readCart());
+  };
 
-  const removeAt = useCallback((idx) => {
-    setItems((prev) => {
-      const copy = prev.filter((_, i) => i !== idx);
-      writeCart(copy);
-      return copy;
-    });
-  }, []);
+  const onRemove = (uid) => {
+    removeItem(uid);
+    setItems(readCart());
+  };
 
-  const clearAll = useCallback(() => {
-    writeCart([]);
-    setItems([]);
-  }, []);
+  const onClear = () => {
+    clearCart();
+    setItems(readCart());
+  };
 
-  const total = useMemo(() => {
-    return items.reduce((acc, it) => {
-      const price = Number(it?.precio ?? it?.price ?? 0);
-      const qty = Number(it?.qty ?? 1);
-      return acc + price * qty;
-    }, 0);
-  }, [items]);
-
-  const canFinish = items.length > 0;
-
-  const handleFinish = useCallback(() => {
-    if (!canFinish) return;
-    writeCart(items); // snapshot por si la siguiente pantalla lo necesita
-    try { onFinish?.(); } catch (e) { console.error(e); }
-  }, [canFinish, items, onFinish]);
-
-  // Cerrar con ESC
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => e.key === "Escape" && onClose?.();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  // 👇 ESTE es el “terminar pedido”
+  const goCheckout = () => {
+    onClose?.();                 // cierra el panel
+    setTimeout(() => goTo("/checkout"), 0);  // navega al resumen
+  };
 
   return (
-    <>
+    <div className={`fixed inset-0 z-[9998] ${open ? "block" : "hidden"}`} aria-hidden={!open}>
       {/* Backdrop */}
-      <div
-        className={[
-          "fixed inset-0 transition-opacity",
-          open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
-          "bg-black/40",
-          "z-[110]",
-        ].join(" ")}
-        onClick={onClose}
-      />
+      <div className="absolute inset-0 bg-black/50" onClick={() => onClose?.()} />
 
       {/* Panel */}
-      <aside
-        className={[
-          "fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl",
-          "transition-transform duration-300",
-          open ? "translate-x-0" : "translate-x-full",
-          "z-[120] flex flex-col",
-        ].join(" ")}
-        onClick={(e) => e.stopPropagation()}
-        aria-hidden={!open}
-      >
+      <div className="absolute right-0 top-0 h-full w-full max-w-[480px] overflow-hidden rounded-l-2xl bg-white shadow-2xl">
         {/* Header */}
-        <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="text-lg font-bold">Tu pedido</h2>
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h3 className="text-lg font-semibold">Tu pedido</h3>
           <button
-            onClick={onClose}
-            className="rounded-lg px-3 py-1.5 border hover:bg-gray-50"
+            className="rounded-full p-2 text-gray-500 hover:bg-gray-100"
+            onClick={() => onClose?.()}
+            aria-label="Cerrar"
           >
-            Cerrar
+            ✕
           </button>
         </div>
 
         {/* Lista */}
-        <div className="flex-1 overflow-auto p-4 space-y-3">
-          {items.length === 0 ? (
-            <div className="text-gray-600">El carrito está vacío.</div>
-          ) : (
-            items.map((it, idx) => {
-              const price = Number(it?.precio ?? it?.price ?? 0);
-              const qty = Number(it?.qty ?? 1);
-              const lineTotal = price * qty;
-              const mods = getMods(it);
+        <div className="flex h-[calc(100%-180px)] flex-col gap-3 overflow-y-auto px-5 py-4">
+          {items.length === 0 && (
+            <div className="py-12 text-center text-sm text-gray-500">
+              Aún no agregaste productos.
+            </div>
+          )}
 
-              return (
-                <div key={idx} className="border rounded-xl p-3">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1">
-                      <div className="font-semibold">
-                        {it?.nombre ?? it?.name ?? "Producto"}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {price.toLocaleString("es-AR", {
-                          style: "currency",
-                          currency: "ARS",
-                          maximumFractionDigits: 0,
-                        })}{" "}
-                        × {qty} ={" "}
-                        <span className="font-semibold">
-                          {lineTotal.toLocaleString("es-AR", {
-                            style: "currency",
-                            currency: "ARS",
-                            maximumFractionDigits: 0,
-                          })}
-                        </span>
-                      </div>
-
-                      {/* 🔻 Bloque de modificaciones: debajo y separado */}
-                      {mods.hasChanges && (
-                        <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-2">
-                          <div className="text-xs font-semibold text-gray-700 mb-1">
-                            Modificaciones
-                          </div>
-
-                          {mods.removed.length > 0 && (
-                            <div className="text-xs text-gray-700">
-                              <span className="font-medium">− Sin:</span>{" "}
-                              {mods.removed.join(", ")}
-                            </div>
-                          )}
-                          {mods.extras.length > 0 && (
-                            <div className="text-xs text-gray-700">
-                              <span className="font-medium">＋ Extra:</span>{" "}
-                              {mods.extras.join(", ")}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Controles */}
-                    <div className="flex flex-col items-end gap-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="px-2 py-1 rounded-lg border hover:bg-gray-50"
-                          onClick={() => decrease(idx)}
-                          aria-label="Disminuir"
-                        >
-                          −
-                        </button>
-                        <span className="min-w-6 text-center">{qty}</span>
-                        <button
-                          className="px-2 py-1 rounded-lg border hover:bg-gray-50"
-                          onClick={() => increase(idx)}
-                          aria-label="Aumentar"
-                        >
-                          ＋
-                        </button>
-                      </div>
-                      <button
-                        className="px-2 py-1 text-sm rounded-lg border hover:bg-gray-50"
-                        onClick={() => removeAt(idx)}
-                      >
-                        Quitar
-                      </button>
-                    </div>
+          {items.map((it) => (
+            <div key={it.uid} className="rounded-2xl border px-4 py-3 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">{it.nombre}</div>
+                  {it?.custom?.ingredients?.length > 0 && (
+                    <ul className="mt-1 text-xs text-gray-600">
+                      {it.custom.ingredients.map((ing) => {
+                        const q = Number(ing.qty || 1);
+                        if (q === 1) return null;
+                        if (q === 0) return <li key={ing.id}>− Sin {ing.nombre}</li>;
+                        return <li key={ing.id}>＋ Extra {ing.nombre}</li>;
+                      })}
+                    </ul>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold">
+                    ${Number(it.subtotal || 0).toLocaleString("es-AR")}
                   </div>
                 </div>
-              );
-            })
-          )}
+              </div>
+
+              {/* Controles */}
+              <div className="mt-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    className="h-8 w-8 rounded-full border text-lg leading-8 hover:bg-gray-50"
+                    onClick={() => onDec(it.uid)}
+                  >
+                    −
+                  </button>
+                  <div className="min-w-[2.5rem] text-center text-sm font-medium">
+                    {it.qty}
+                  </div>
+                  <button
+                    className="h-8 w-8 rounded-full border text-lg leading-8 hover:bg-gray-50"
+                    onClick={() => onInc(it.uid)}
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button
+                  className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-200"
+                  onClick={() => onRemove(it.uid)}
+                >
+                  Quitar
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t bg-white">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-gray-700">Total</span>
-            <span className="text-lg font-bold">
-              {total.toLocaleString("es-AR", {
-                style: "currency",
-                currency: "ARS",
-                maximumFractionDigits: 0,
-              })}
+        <div className="border-t px-5 py-4">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-sm text-gray-600">Total</span>
+            <span className="text-lg font-semibold">
+              ${Number(total).toLocaleString("es-AR")}
             </span>
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex items-center gap-3">
             <button
-              onClick={clearAll}
-              className="w-1/3 px-4 py-3 rounded-xl border hover:bg-gray-50"
+              className="rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
+              onClick={onClear}
             >
               Vaciar
             </button>
+            {/* 👇 Botón “Terminar pedido” usa goCheckout */}
             <button
-              id="finish-order-btn"
-              onClick={handleFinish}
-              disabled={!canFinish}
-              className={[
-                "w-2/3 px-4 py-3 rounded-xl text-white font-semibold",
-                canFinish ? "bg-red-600 hover:bg-red-700" : "bg-gray-300 cursor-not-allowed",
-              ].join(" ")}
+              className="flex-1 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+              onClick={goCheckout}
+              disabled={items.length === 0}
             >
               Terminar pedido
             </button>
           </div>
         </div>
-      </aside>
-    </>
+      </div>
+    </div>
   );
 }

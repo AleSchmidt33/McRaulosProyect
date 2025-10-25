@@ -1,109 +1,132 @@
 // src/components/CheckoutScreen.jsx
-import { useEffect, useMemo, useState } from "react";
-import { readCart, subtotal } from "../lib/cart";
+import { useEffect, useState, useMemo } from "react";
+import { readCart, getCartTotal, getCartCount } from "../lib/cart";
+import { goTo } from "../lib/navbus";
 
-export default function CheckoutScreen({ onBack, onPay }) {
+export default function CheckoutScreen() {
   const [items, setItems] = useState([]);
 
+  // Cargar y escuchar cambios del carrito
   useEffect(() => {
-    const sync = () => setItems(readCart());
-    sync();
-    window.addEventListener("cart:update", sync);
-    return () => window.removeEventListener("cart:update", sync);
+    const load = () => setItems(readCart());
+    load();
+    const h = () => load();
+    window.addEventListener("mcraulos:cart-changed", h);
+    window.addEventListener("storage", h);
+    return () => {
+      window.removeEventListener("mcraulos:cart-changed", h);
+      window.removeEventListener("storage", h);
+    };
   }, []);
 
-  const orderType = localStorage.getItem("orderType") || "comer-aca";
-  const typeLabel = orderType === "comer-aca" ? "Comer acá" : "Para llevar";
-  const total = useMemo(() => subtotal(), [items]);
+  const total = useMemo(() => getCartTotal(), [items]);
+  const count = useMemo(() => getCartCount(), [items]);
 
-  const currency = (n) =>
-    Number(n).toLocaleString("es-AR", {
-      style: "currency",
-      currency: "ARS",
-      maximumFractionDigits: 0,
-    });
-
-  const renderCustom = (it) => {
-    const ings = it.custom?.ingredients;
-    if (!Array.isArray(ings) || ings.length === 0) return null;
-
-    const removed = ings.filter((x) => Number(x.qty) === 0).map((x) => x.nombre);
-    const extras = ings.filter((x) => Number(x.qty) > 1).map((x) => `${x.nombre} x${x.qty}`);
-
-    if (removed.length === 0 && extras.length === 0) {
-      return <div className="text-xs text-gray-500">Sin cambios</div>;
-    }
-    return (
-      <div className="text-xs text-gray-600">
-        {removed.length > 0 && <div>− Sin: {removed.join(", ")}</div>}
-        {extras.length > 0 && <div>＋ Extra: {extras.join(", ")}</div>}
-      </div>
-    );
-  };
+  const goPay = () => goTo("/pay");
+  const seguirEditando = () => goTo("/menu");
 
   return (
-    <div className="min-h-screen">
-      <div className="max-w-4xl mx-auto px-4 py-10">
-        {/* Encabezado */}
-        <div className="bg-white/95 backdrop-blur rounded-3xl shadow-xl border border-white/40 p-6 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-yellow-400 flex items-center justify-center text-lg">🧾</div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">Resumen del pedido</h1>
-              <div className="text-gray-600">Modalidad: <span className="font-semibold">{typeLabel}</span></div>
-            </div>
-            <button onClick={onBack} className="ml-auto px-4 py-2 rounded-xl bg-gray-700 text-white hover:bg-gray-800">
-              Volver al menú
-            </button>
+    <div className="mx-auto max-w-6xl p-8">
+      {/* CARD: Título + único botón Seguir editando (look "Volver") */}
+      <div className="mb-8 rounded-2xl border bg-white/90 p-6 shadow-sm backdrop-blur-sm">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <h1 className="text-3xl font-bold md:text-4xl">Resumen de tu pedido</h1>
+            <p className="mt-1 text-base text-gray-600">Productos: {count}</p>
           </div>
+          <button
+            className="rounded-2xl border border-gray-300 bg-white px-6 py-3 text-base font-semibold text-gray-800 shadow-sm hover:bg-gray-100 active:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300"
+            onClick={seguirEditando}
+            aria-label="Volver al menú para seguir editando"
+          >
+            Seguir editando
+          </button>
         </div>
+      </div>
 
-        {/* Detalle de ítems */}
-        <div className="bg-white/90 backdrop-blur rounded-3xl shadow border border-white/40 p-4">
+      {/* Layout: listado único a la izquierda, total a la derecha */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        {/* CARD ÚNICA: listado de items */}
+        <div className="xl:col-span-2">
           {items.length === 0 ? (
-            <div className="text-gray-600 bg-gray-50 border rounded-xl p-4">
-              No hay ítems en el carrito.
+            <div className="rounded-2xl border bg-white/90 p-10 text-center text-lg text-gray-600 shadow-sm backdrop-blur-sm">
+              Tu carrito está vacío.
             </div>
           ) : (
-            <ul className="divide-y">
-              {items.map((it, i) => {
-                const lineTotal = (Number(it.precio ?? 0) * Number(it.qty ?? 1)) || 0;
-                return (
-                  <li key={i} className="py-3">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1">
-                        <div className="font-semibold text-gray-900 truncate">{it.nombre}</div>
-                        <div className="ml-auto text-gray-700">
-                          {currency(it.precio)} × {it.qty} = <span className="font-semibold">{currency(lineTotal)}</span>
+            <div className="rounded-2xl border bg-white/95 p-6 shadow-md backdrop-blur">
+              <ul className="divide-y divide-gray-200">
+                {items.map((it) => (
+                  <li key={it.uid} className="py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      {/* Nombre + chips */}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-lg font-semibold">
+                          {it.nombre}
+                        </div>
+
+                        {/* Chips de modificaciones debajo */}
+                        {it?.custom?.ingredients?.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {it.custom.ingredients.map((ing) => {
+                              const q = Number(ing.qty || 1);
+                              if (q === 1) return null;
+                              if (q === 0) {
+                                return (
+                                  <span
+                                    key={ing.id}
+                                    className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
+                                  >
+                                    − Sin {ing.nombre}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span
+                                  key={ing.id}
+                                  className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
+                                >
+                                  ＋ Extra {ing.nombre}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Cantidad + subtotal */}
+                      <div className="text-right">
+                        <div className="text-base text-gray-500">x{it.qty}</div>
+                        <div className="text-lg font-semibold">
+                          ${Number(it.subtotal || 0).toLocaleString("es-AR")}
                         </div>
                       </div>
-                      {renderCustom(it)}
                     </div>
                   </li>
-                );
-              })}
-            </ul>
-          )}
-
-          {/* Totales */}
-          <div className="mt-4 pt-4 border-t flex items-center justify-between">
-            <div className="text-gray-700 font-medium">Subtotal</div>
-            <div className="text-lg font-bold">
-              {Number(total).toLocaleString("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 })}
+                ))}
+              </ul>
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* Acciones */}
-          <div className="mt-4 flex gap-2">
-            <button onClick={onBack} className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200">
-              Seguir editando
-            </button>
+        {/* Card de Total */}
+        <div>
+          <div className="rounded-2xl border bg-white/90 p-6 shadow-md backdrop-blur-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <span className="text-xl text-gray-700">Total</span>
+              <span className="text-3xl font-bold text-gray-900">
+                ${Number(total).toLocaleString("es-AR")}
+              </span>
+            </div>
             <button
-              onClick={onPay}
-              className="ml-auto px-4 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700"
+              className="w-full rounded-2xl bg-red-600 px-7 py-3 text-lg font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              onClick={goPay}
+              disabled={items.length === 0}
             >
               Ir a pagar
             </button>
+            <p className="mt-3 text-xs text-gray-500">
+              Revisá tu pedido antes de continuar al pago.
+            </p>
           </div>
         </div>
       </div>

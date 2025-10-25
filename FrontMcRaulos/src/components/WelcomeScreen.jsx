@@ -1,25 +1,28 @@
 // src/components/WelcomeScreen.jsx
-// ⬇️ Reemplazá TODO lo que haya de imports por SOLO esta línea
 import { useState, useCallback } from "react";
+import StampBackground from "./StampBackground";
 
 export default function WelcomeScreen({ onContinue }) {
   const [mode, setMode] = useState(
     () => localStorage.getItem("orderType") || "comer-aca"
   );
 
-  const handleContinue = useCallback((e) => {
-    e?.preventDefault?.();
-    e?.stopPropagation?.();
-    try {
-      localStorage.setItem("orderType", mode);
-    } catch {}
-    if (typeof onContinue === "function") {
-      onContinue();
-    } else {
-      // Fallback por si no te llega la prop
-      window.dispatchEvent(new CustomEvent("mcraulos:go-menu"));
-    }
-  }, [mode, onContinue]);
+  const handleContinue = useCallback(
+    (e) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      try {
+        localStorage.setItem("orderType", mode);
+      } catch {}
+      if (typeof onContinue === "function") {
+        onContinue();
+      } else {
+        // Fallback por si no te llega la prop
+        window.dispatchEvent(new CustomEvent("mcraulos:go-menu"));
+      }
+    },
+    [mode, onContinue]
+  );
 
   const Option = ({ value, emoji, label }) => {
     const active = mode === value;
@@ -42,7 +45,13 @@ export default function WelcomeScreen({ onContinue }) {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-neutral-50">
+    <div className="relative min-h-screen w-full flex items-center justify-center">
+      {/* Fondo con estampa, detrás y sin bloquear clics */}
+      <div className="pointer-events-none absolute inset-0 -z-50">
+        <StampBackground />
+      </div>
+
+      {/* Contenido existente (sin cambios de lógica) */}
       <div className="w-full max-w-md px-6">
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <div className="flex items-center gap-3 mb-3">
@@ -51,9 +60,7 @@ export default function WelcomeScreen({ onContinue }) {
           </div>
 
           <h2 className="text-3xl font-extrabold mb-2">¡Bienvenido!</h2>
-          <p className="text-gray-600 mb-6">
-            ¿Cómo preferís disfrutar tu comida?
-          </p>
+          <p className="text-gray-600 mb-6">¿Cómo preferís disfrutar tu comida?</p>
 
           <div className="space-y-4">
             <Option value="comer-aca" emoji="🍽️" label="Comer acá" />

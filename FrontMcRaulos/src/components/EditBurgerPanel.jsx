@@ -1,145 +1,217 @@
-// src/components/EditBurgerPanel.jsx
 import { useEffect, useMemo, useState } from "react";
 import { addCustomItem } from "../lib/cart";
 
-const byIdEndpoint = (id) => `/api/productos/${id}`;
+/**
+ * Normaliza la respuesta del backend:
+ *  - Usa data.ingredientes_base (o data.ingredientes)
+ *  - Excluye PAN
+ *  - Arranca todos los ingredientes en qty = 1 (0=quitar, ≥2=extra)
+ */
+const normalizeIngredientsFromProducto = (payload) => {
+  const prod = payload?.data ?? payload?.producto ?? payload ?? {};
+  const base = prod.ingredientes_base ?? prod.ingredientes ?? [];
+  return (base || [])
+    .filter((i) => !/pan/i.test(String(i?.nombre ?? i?.name ?? "")))
+    .map((i, idx) => ({
+      id: i.id_ingrediente ?? i.id ?? i._id ?? idx,
+      nombre: i.nombre ?? i.name ?? `Ingrediente ${idx + 1}`,
+      qty: 1,
+    }));
+};
 
-export default function EditBurgerPanel({ open, onClose, product }) {
+const getProductoId = (p) =>
+  p?.id ?? p?.id_producto ?? p?.producto_id ?? p?.productoId ?? null;
+
+export default function EditBurgerPanel({ open, product, onClose }) {
+  const productId = getProductoId(product);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
-  const [baseIngredients, setBaseIngredients] = useState([]); // [{id, nombre}]
-  const [qtyMap, setQtyMap] = useState({}); // {idIngrediente: qty}
+  const [baseIngredients, setBaseIngredients] = useState([]);
+  const [qtyMap, setQtyMap] = useState({}); // { [idIng]: qty }
 
-  const productId = product?.id ?? product?.id_producto ?? product?._id ?? null;
-
-  // Cargar ingredientes del producto (excluye pan)
+  // Carga ingredientes del backend usando RUTA RELATIVA (usa el proxy de Vite)
   useEffect(() => {
-    let alive = true;
-    if (!open || productId == null) return;
+    if (!open || !productId) return;
+    let cancel = false;
+    setLoading(true);
+    setErr(null);
 
     (async () => {
       try {
-        setLoading(true);
-        setErr(null);
-        const res = await fetch(byIdEndpoint(productId));
-        const text = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status} - ${text}`);
-        const json = JSON.parse(text);
-        const data = json?.data ?? json;
+        const res = await fetch(`/api/productos/${productId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
 
-        const lista = Array.isArray(data?.ingredientes_base) ? data.ingredientes_base : [];
-        const normalized = lista
-          .map((ing, i) => ({
-            id: ing.id_ingrediente ?? ing.id ?? ing._id ?? i,
-            nombre: ing.nombre ?? ing.name ?? "Ingrediente",
-          }))
-          .filter((x) => !/^\s*pan\b/i.test(x.nombre)); // excluir "pan"
-
-        if (!alive) return;
-        setBaseIngredients(normalized);
-        // qty 1 por defecto (presente); 0 = quitar; >=2 = extra
-        const map = {};
-        normalized.forEach((ing) => (map[ing.id] = 1));
-        setQtyMap(map);
+        const ings = normalizeIngredientsFromProducto(data);
+        if (!cancel) {
+          setBaseIngredients(ings);
+          const map = Object.fromEntries(ings.map((x) => [x.id, 1]));
+          setQtyMap(map);
+        }
       } catch (e) {
-        if (alive) setErr(e.message);
-        console.error("Fallo GET /api/productos/:id", e);
+        if (!cancel) {
+          console.warn(
+            "[EditBurgerPanel] Ingredientes por back fallaron:",
+            e?.message || e
+          );
+          setErr(
+            "No se pudo cargar desde el servidor. Usando datos locales."
+          );
+          setBaseIngredients([]); // sin ingredientes editables
+          setQtyMap({});
+        }
       } finally {
-        if (alive) setLoading(false);
+        !cancel && setLoading(false);
       }
     })();
 
     return () => {
-      alive = false;
+      cancel = true;
     };
   }, [open, productId]);
 
-  const onInc = (id) => setQtyMap((m) => ({ ...m, [id]: Math.max(0, (Number(m[id]) || 0) + 1) }));
-  const onDec = (id) => setQtyMap((m) => ({ ...m, [id]: Math.max(0, (Number(m[id]) || 0) - 1) }));
-
-  const customPayload = useMemo(() => {
-    // Guardamos la personalización como lista {id_ingrediente, nombre, qty}
-    const ingredients = baseIngredients.map((ing) => ({
-      id_ingrediente: ing.id,
-      nombre: ing.nombre,
-      qty: Number(qtyMap[ing.id] ?? 0),
+  const ingredientesList = useMemo(() => {
+    return baseIngredients.map((ing) => ({
+      ...ing,
+      qty: qtyMap[ing.id] ?? 1,
     }));
-    return { ingredients };
   }, [baseIngredients, qtyMap]);
 
-  const onSave = () => {
-    // Guardar como item SEPARADO en el carrito
-    addCustomItem(product, customPayload, 1);
+  const onInc = (id) =>
+    setQtyMap((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 1) + 1) }));
+  const onDec = (id) =>
+    setQtyMap((m) => ({ ...m, [id]: Math.max(0, (m[id] ?? 1) - 1) }));
+
+  const handleAdd = () => {
+    // Armamos el payload de personalización esperado por el carrito
+    const custom = {
+      ingredients: ingredientesList.map((x) => ({
+        id: x.id,
+        nombre: x.nombre,
+        qty: Number(x.qty) || 0, // 0=sin, 1=base, ≥2=extra
+      })),
+    };
+
+    // Agrega como ítem separado (uid) para que no mergee con otras
+    addCustomItem(product, custom, 1);
     onClose?.();
   };
 
-  if (!open) return null;
+  const title =
+    product?.nombre || product?.name || product?.titulo || "Hamburguesa";
 
   return (
-    <>
-      {/* Overlay */}
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-40" onClick={onClose} />
+    <div
+      className={`${
+        open ? "block" : "hidden"
+      } fixed inset-0 z-50 flex items-center justify-center`}
+      aria-hidden={!open}
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={() => onClose?.()}
+      />
 
-      {/* Drawer */}
-      <aside className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-white z-50 shadow-2xl flex flex-col">
-        <div className="p-4 border-b flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-orange-400 text-white flex items-center justify-center text-lg">🍔</div>
-          <h2 className="text-xl font-semibold">
-            Editar {product?.nombre ?? "Hamburguesa"}
-          </h2>
-          <button onClick={onClose} className="ml-auto px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200">✕</button>
+      {/* Panel */}
+      <div className="relative z-10 w-[620px] max-w-[92vw] rounded-2xl bg-white p-6 shadow-xl">
+        {/* Header */}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-full bg-yellow-100">🍔</div>
+            <h2 className="text-xl font-semibold">Editar {title}</h2>
+          </div>
+          <button
+            className="rounded-full p-2 text-gray-500 hover:bg-gray-100"
+            onClick={() => onClose?.()}
+            aria-label="Cerrar"
+            title="Cerrar"
+          >
+            ✕
+          </button>
         </div>
 
-        <div className="p-4 flex-1 overflow-y-auto">
-          {loading && <div className="bg-gray-50 border rounded-xl p-3">Cargando ingredientes…</div>}
-          {err && <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-3">Error: {err}</div>}
+        {/* Texto guía */}
+        <p className="mb-1 text-sm text-gray-700">
+          Ajustá la cantidad de cada ingrediente (se excluye el pan).{" "}
+          <strong>0 = sin ingrediente, 2+ = extra</strong>.
+        </p>
 
-          {!loading && !err && (
-            <>
-              <p className="text-sm text-gray-600 mb-3">
-                Ajustá la cantidad de cada ingrediente (se excluye el pan). <strong>0 = sin ingrediente</strong>, <strong>2+ = extra</strong>.
-              </p>
+        {/* Estado sin ingredientes */}
+        {(!ingredientesList.length && !loading) && (
+          <p className="mb-3 text-sm text-gray-600">
+            Esta hamburguesa no tiene ingredientes editables.
+          </p>
+        )}
 
-              <ul className="space-y-3">
-                {baseIngredients.map((ing) => (
-                  <li key={ing.id} className="border rounded-xl p-3 flex items-center gap-3">
-                    <div className="font-medium flex-1">{ing.nombre}</div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => onDec(ing.id)}
-                        className="px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200"
-                        aria-label="disminuir"
-                      >
-                        −
-                      </button>
-                      <span className="w-8 text-center font-semibold">
-                        {qtyMap[ing.id] ?? 0}
-                      </span>
-                      <button
-                        onClick={() => onInc(ing.id)}
-                        className="px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200"
-                        aria-label="aumentar"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </>
+        {/* Aviso amarillo cuando hay error (igual al que tenías) */}
+        {err && (
+          <div className="mb-4 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+            {err}
+          </div>
+        )}
+
+        {/* Lista de ingredientes */}
+        <div className="max-h-[320px] overflow-y-auto pr-1">
+          {ingredientesList.map((ing) => (
+            <div
+              key={ing.id}
+              className="flex items-center justify-between border-b py-2 last:border-b-0"
+            >
+              <span
+                className={`text-sm ${
+                  ing.qty === 0 ? "text-red-600 line-through" : "text-gray-800"
+                }`}
+              >
+                {ing.nombre}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  className="h-8 w-8 rounded-full border text-lg leading-8 hover:bg-gray-50"
+                  onClick={() => onDec(ing.id)}
+                  aria-label="Disminuir"
+                >
+                  −
+                </button>
+                <div className="min-w-[2.5rem] text-center text-sm font-medium">
+                  {ing.qty}
+                </div>
+                <button
+                  className="h-8 w-8 rounded-full border text-lg leading-8 hover:bg-gray-50"
+                  onClick={() => onInc(ing.id)}
+                  aria-label="Aumentar"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="py-10 text-center text-sm text-gray-500">
+              Cargando ingredientes…
+            </div>
           )}
         </div>
 
-        <div className="p-4 border-t bg-white flex gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200">Cancelar</button>
+        {/* Footer */}
+        <div className="mt-6 flex items-center justify-between">
           <button
-            onClick={onSave}
-            className="ml-auto px-4 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700"
+            className="rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
+            onClick={() => onClose?.()}
           >
-            Guardar personalización
+            Cancelar
+          </button>
+
+          <button
+            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            onClick={handleAdd}
+            disabled={loading}
+          >
+            Agregar al carrito
           </button>
         </div>
-      </aside>
-    </>
+      </div>
+    </div>
   );
 }
