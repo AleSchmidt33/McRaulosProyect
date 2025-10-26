@@ -170,7 +170,7 @@ app.get('/api/productos/:id', async (req, res) => {
 
 // Crear un nuevo pedido con la nueva estructura de BD
 /*
-Estructura del JSON de entrada:
+Estructura deseada del JSON de entrada:
 {
   "id_cliente": 5, // Opcional - si no se proporciona, se usa cliente 1 (consumidor final)
   "id_tipo_pedido": 1, // Required
@@ -204,6 +204,7 @@ Estructura del JSON de entrada:
   }
 }
 */
+
 
 app.post('/api/pedidos', async (req, res) => {
   const { 
@@ -300,6 +301,7 @@ app.post('/api/pedidos', async (req, res) => {
         }
         
         // Calcular precio base
+        
         let subtotal = parseFloat(productoInfo[0].precio_base);
         
         // Obtener ingredientes base del producto

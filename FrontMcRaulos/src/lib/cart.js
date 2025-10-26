@@ -145,3 +145,60 @@ export const subscribeCart = (fn) => {
     window.removeEventListener("storage", handler);
   };
 };
+
+// =================== NUEVO: Payload para el backend ===================
+
+export const toBackendOrderPayload = (orderType = "comer-aca") => {
+  const items = readCart();
+  
+  // Mapeo de tipo de pedido: 1=llevar, 2=comer aquí
+  const id_tipo_pedido = orderType === "para-llevar" ? 1 : 2;
+  
+  const productos = [];
+  
+  for (const item of items) {
+    const baseProducto = {
+      id_producto: item.id,
+      notas: item.nota || item.note || null,
+      ingredientes_personalizados: []
+    };
+    
+    // Si tiene custom.ingredients, procesamos los ingredientes
+    if (item.custom?.ingredients && Array.isArray(item.custom.ingredients)) {
+      for (const ing of item.custom.ingredients) {
+        const qty = safeNumber(ing.qty, 1);
+        
+        // Solo agregamos si NO es la cantidad base (1)
+        if (qty === 0) {
+          // Ingrediente removido
+          baseProducto.ingredientes_personalizados.push({
+            id_ingrediente: ing.id ?? ing.id_ingrediente,
+            cantidad: 1,
+            es_extra: false  // false = se remueve
+          });
+        } else if (qty >= 2) {
+          // Ingrediente extra (qty - 1 porque 1 es base)
+          baseProducto.ingredientes_personalizados.push({
+            id_ingrediente: ing.id ?? ing.id_ingrediente,
+            cantidad: qty - 1,  // Solo lo adicional
+            es_extra: true  // true = se agrega
+          });
+        }
+        // qty === 1 no se envía (es la cantidad base normal)
+      }
+    }
+    
+    // Repetimos el producto según la cantidad
+    const cantidad = Math.max(1, safeNumber(item.qty, 1));
+    for (let i = 0; i < cantidad; i++) {
+      productos.push({ ...baseProducto });
+    }
+  }
+  
+  return {
+    id_cliente: 1,  // Siempre usa cliente 1 (consumidor final)
+    id_tipo_pedido,
+    // id_cupon: null,  // Lo omitimos por ahora
+    productos
+  };
+};
