@@ -204,7 +204,7 @@ Estructura deseada del JSON de entrada:
   }
 }
 */
-
+//debugger;
 
 app.post('/api/pedidos', async (req, res) => {
   const { 
@@ -337,7 +337,7 @@ app.post('/api/pedidos', async (req, res) => {
             
             // Acumular demanda de ingredientes extras/personalizados
             const cantidadActual = demandaIngredientes.get(ingrediente.id_ingrediente) || 0;
-            if(ingrediente.es_extra){
+            if(ingrediente.es_extra === true){
                 demandaIngredientes.set(
                 ingrediente.id_ingrediente, 
                 cantidadActual + parseFloat(ingrediente.cantidad)
@@ -351,10 +351,11 @@ app.post('/api/pedidos', async (req, res) => {
             
             
             // Solo calcular costo para ingredientes extras
-            if (ingrediente.es_extra) {
+            if (ingrediente.es_extra === true) {
               subtotal += parseFloat(ingredienteInfo[0].precio) * parseFloat(ingrediente.cantidad);
             }
             
+
             ingredientesExtras.push({
               ...ingrediente,
               precio: parseFloat(ingredienteInfo[0].precio),
@@ -468,8 +469,8 @@ app.post('/api/pedidos', async (req, res) => {
         
         // Actualizar stock de ingredientes base del producto
         for (const ingredienteBase of producto.ingredientes_base) {
-          console.log(ingredienteBase)
-          console.log(ingredienteBase.cantidad)
+          console.log("472", ingredienteBase)
+          console.log("473", ingredienteBase.cantidad)
           await sql`
             UPDATE ingredientes 
             SET stock = stock - ${ingredienteBase.cantidad}
@@ -478,31 +479,49 @@ app.post('/api/pedidos', async (req, res) => {
         }
         
         // Insertar ingredientes personalizados/extras
-        if (producto.ingredientes_extras && producto.ingredientes_extras.length > 0) {
-          for (const ingrediente of producto.ingredientes_extras) {
-            await sql`
-              INSERT INTO extras (
-                id_detalle_pedido, 
-                id_ingrediente, 
-                cantidad, 
-                es_extra
-              )
-              VALUES (
-                ${idDetalle}, 
-                ${ingrediente.id_ingrediente}, 
-                ${ingrediente.cantidad}, 
-                ${ingrediente.es_extra}
-              );
-            `;
-            
-            // Actualizar stock del ingrediente
-            await sql`
-              UPDATE ingredientes 
-              SET stock = stock - ${ingrediente.cantidad}
-              WHERE id_ingrediente = ${ingrediente.id_ingrediente};
-            `;
-          }
-        }
+if (producto.ingredientes_extras && producto.ingredientes_extras.length > 0) {
+console.log('Ingredientes:', JSON.stringify(producto.ingredientes_extras, null, 2));
+  for (const ingrediente of producto.ingredientes_extras) {
+    await sql`
+      INSERT INTO extras (
+        id_detalle_pedido, 
+        id_ingrediente, 
+        cantidad, 
+        es_extra
+      )
+      VALUES (
+        ${idDetalle}, 
+        ${ingrediente.id_ingrediente}, 
+        ${ingrediente.cantidad}, 
+        ${ingrediente.es_extra}
+      );
+    `;
+
+    // Normalizar valor de es_extra
+const esExtra = ['true', '1', 1, true, 'TRUE', 'True'].includes(ingrediente.es_extra);
+
+    const stockActual = await sql`
+      SELECT stock FROM ingredientes
+      WHERE id_ingrediente = ${ingrediente.id_ingrediente};
+    `;
+
+    console.log('507 Stock actual:', stockActual);
+    console.log('508 Ingrediente:', ingrediente.id_ingrediente, 'esExtra:', esExtra);
+
+    // Calcular nuevo stock
+    const nuevoStock = esExtra
+      ? stockActual[0].stock - parseFloat(ingrediente.cantidad)
+      : stockActual[0].stock + parseFloat(ingrediente.cantidad);
+
+    await sql`
+      UPDATE ingredientes 
+      SET stock = ${nuevoStock}
+      WHERE id_ingrediente = ${ingrediente.id_ingrediente};
+    `;
+  }
+}
+
+
       }
       
       // Eliminar cupón si se usó (un solo uso)
