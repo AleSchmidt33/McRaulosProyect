@@ -7,6 +7,7 @@ import { addCustomItem } from "../lib/cart";
  *  - Excluye PAN
  *  - Arranca todos los ingredientes en qty = 1 (0=quitar, ≥2=extra)
  */
+// Modificar normalizeIngredientsFromProducto
 const normalizeIngredientsFromProducto = (payload) => {
   const prod = payload?.data ?? payload?.producto ?? payload ?? {};
   const base = prod.ingredientes_base ?? prod.ingredientes ?? [];
@@ -16,7 +17,23 @@ const normalizeIngredientsFromProducto = (payload) => {
       id: i.id_ingrediente ?? i.id ?? i._id ?? idx,
       nombre: i.nombre ?? i.name ?? `Ingrediente ${idx + 1}`,
       qty: 1,
+      precio: Number(i.precio ?? i.price ?? i.precio_extra ?? 0), // 🆕 AGREGAR PRECIO
     }));
+};
+
+// En handleAdd, asegurate de incluir el precio:
+const handleAdd = () => {
+  const custom = {
+    ingredients: ingredientesList.map((x) => ({
+      id: x.id,
+      nombre: x.nombre,
+      qty: Number(x.qty) || 0,
+      precio: Number(x.precio) || 0, // 🆕 incluir precio
+    })),
+  };
+
+  addCustomItem(product, custom, 1);
+  onClose?.();
 };
 
 const getProductoId = (p) =>
@@ -84,11 +101,12 @@ export default function EditBurgerPanel({ open, product, onClose }) {
 
   const handleAdd = () => {
     // Armamos el payload de personalización esperado por el carrito
-    const custom = {
+  const custom = {
       ingredients: ingredientesList.map((x) => ({
         id: x.id,
         nombre: x.nombre,
         qty: Number(x.qty) || 0, // 0=sin, 1=base, ≥2=extra
+        precio: Number(x.precio) || 0, // ✅ necesario para sumar extras
       })),
     };
 
@@ -133,8 +151,7 @@ export default function EditBurgerPanel({ open, product, onClose }) {
 
         {/* Texto guía */}
         <p className="mb-1 text-sm text-gray-700">
-          Ajustá la cantidad de cada ingrediente (se excluye el pan).{" "}
-          <strong>0 = sin ingrediente, 2+ = extra</strong>.
+          Ajusta los ingredientes a tu gusto!
         </p>
 
         {/* Estado sin ingredientes */}

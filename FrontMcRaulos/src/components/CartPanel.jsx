@@ -283,7 +283,7 @@ export default function CartPanel(props) {
               const modsText = (() => {
                 if (!showMods) return "";
                 const extras  = p?.extras  ?? p?.custom?.extras  ?? p?.modificaciones ?? [];
-                const removed = p?.removed ?? p?.custom?.removed ?? p?.quitados       ?? [];
+                const removed = p?.removed ?? p?.custom?.removed ?? p?.quitados ?? [];
                 const parts = [];
                 if (Array.isArray(extras)  && extras.length)  parts.push(`＋ ${extras.map((e) => e?.nombre ?? e).join(", ")}`);
                 if (Array.isArray(removed) && removed.length) parts.push(`− ${removed.map((r) => r?.nombre ?? r).join(", ")}`);
@@ -296,18 +296,83 @@ export default function CartPanel(props) {
 
               return (
                 <div key={`${p.groupKey ?? "single"}-${i}`} className="border rounded-xl p-4 flex items-start justify-between">
-                  <div className="min-w-0">
-                    <div className="font-semibold">{nombre}</div>
-                    {showMods && modsText && <div className="text-sm text-gray-500 mt-1">{modsText}</div>}
-                    <div className="text-sm text-gray-500 mt-1">
-                      {precioUnit.toLocaleString("es-AR", {
-                        style: "currency",
-                        currency: "ARS",
-                        minimumFractionDigits: 0,
-                        maximumFractionDigits: 0,
-                      })}
-                    </div>
-                  </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold">{nombre}</div>
+                        
+                        {/* 🆕 Mostrar precio base si hay extras */}
+                        {p.precioBase && p.precioExtras > 0 && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            Base: ${Number(p.precioBase * p.qty).toLocaleString("es-AR")} 
+                            + Extras: ${Number(p.precioExtras * p.qty).toLocaleString("es-AR")}
+                          </div>
+                        )}
+                        
+{/* 🧩 Mostrar ingredientes agregados o removidos */}
+{(() => {
+  const custom = p?.custom ?? p?.producto?.custom ?? {};
+  const ingredients = custom?.ingredients ?? [];
+
+  if (!Array.isArray(ingredients) || !ingredients.length) {
+    // Fallback: si no hay ingredientes personalizados, mostrar modsText viejo
+    return showMods && modsText ? (
+      <div className="text-sm text-gray-500 mt-1">{modsText}</div>
+    ) : null;
+  }
+
+  const hasMods = ingredients.some((ing) => Number(ing?.qty ?? 1) !== 1);
+  if (!hasMods) {
+    return showMods && modsText ? (
+      <div className="text-sm text-gray-500 mt-1">{modsText}</div>
+    ) : null;
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {ingredients.map((ing) => {
+        const q = Number(ing.qty || 1);
+
+        // Sin cambios → no mostrar
+        if (q === 1) return null;
+
+        // Ingrediente removido
+        if (q === 0) {
+          return (
+            <span
+              key={ing.id}
+              className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
+            >
+              − Sin {ing.nombre}
+            </span>
+          );
+        }
+
+        // Ingrediente extra
+        const cantidadExtra = q - 1;
+        const precioIng = Number(ing.precio || 0);
+        return (
+          <span
+            key={ing.id}
+            className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
+          >
+            ＋ Extra {ing.nombre}
+            {precioIng > 0 &&
+              ` (+$${(precioIng * cantidadExtra).toLocaleString("es-AR")})`}
+          </span>
+        );
+      })}
+    </div>
+  );
+})()}
+                        
+                        <div className="text-sm text-gray-500 mt-1">
+                          Precio unitario: {precioUnit.toLocaleString("es-AR", {
+                            style: "currency",
+                            currency: "ARS",
+                            minimumFractionDigits: 0,
+                            maximumFractionDigits: 0,
+                          })}
+                        </div>
+                      </div>
 
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">

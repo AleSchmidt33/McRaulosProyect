@@ -85,16 +85,47 @@ export const addItem = (prod, qty = 1) => {
 };
 
 // Guarda aunque tenga modificaciones; mantiene custom y agrega extras separados
+// Modificar la función addCustomItem para calcular precio con extras
 export const addCustomItem = (prod, custom, qty = 1) => {
   const base = normalizeProduct(prod, qty);
   if (!base) return null;
 
-  const extras = deriveExtras(custom);
-  const item = {
+    const extras = deriveExtras(custom);
+    const removed = (custom.ingredients || [])
+      .filter(ing => Number(ing.qty || 1) === 0)
+      .map(ing => ({
+        id_ingrediente: ing.id ?? ing.id_ingrediente ?? null,
+        nombre: ing.nombre ?? ing.name ?? "Ingrediente",
+      }));
+  
+  // 🆕 CALCULAR PRECIO EXTRA POR INGREDIENTES
+  let precioExtras = 0;
+  if (extras && extras.length > 0) {
+    // Aquí necesitás el precio de cada ingrediente
+    // Opción 1: Si viene en custom.ingredients
+    precioExtras = (custom.ingredients || [])
+      .filter(ing => Number(ing.qty || 1) > 1)
+      .reduce((sum, ing) => {
+        const cantidadExtra = Number(ing.qty || 1) - 1;
+        const precioIng = Number(ing.precio || ing.price || 0);
+        return sum + (cantidadExtra * precioIng);
+      }, 0);
+  }
+
+  // Ajustar precio y subtotal incluyendo extras
+  const precioTotal = base.precio + precioExtras;
+  const subtotalTotal = precioTotal * qty;
+
+    const item = {
     ...base,
+    precio: precioTotal,
+    precioBase: base.precio,
+    precioExtras: precioExtras,
+    subtotal: subtotalTotal,
     uid: genUid(),
     custom: custom && typeof custom === "object" ? custom : null,
     extras: extras.length ? extras : null,
+    removed: removed.length ? removed : null, // ✅ nuevos removidos
   };
 
   const items = readCart();

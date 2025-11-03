@@ -33,9 +33,8 @@ const buildDisplayItems = (items) => {
   (items || []).forEach((it, idx) => {
     const idProd = it?.producto?.id ?? it?.id ?? it?.productId ?? it?.producto_id;
     // Precio unitario (fallback a subtotal/qty si hace falta)
-    const unitPrice =
-      Number(it?.precio ?? it?.producto?.precio ?? it?.unitario ?? 0) ||
-      (Number(it?.subtotal ?? 0) / Math.max(1, Number(it?.qty ?? 1)));
+        const unitPrice = Number(it?.precio ?? 0);
+        const subtotal = Number(it.subtotal ?? unitPrice * Number(it.qty ?? 1));
 
     const qty = Number(it?.qty ?? 1);
 
@@ -132,39 +131,63 @@ export default function CheckoutScreen() {
                           {it.nombre}
                         </div>
 
-                        {/* Chips de modificaciones debajo (solo si hay) */}
-                        {Array.isArray(it?.custom?.ingredients) &&
-                          it.custom.ingredients.some((ing) => Number(ing?.qty ?? 1) !== 1) && (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {it.custom.ingredients.map((ing) => {
-                                const q = Number(ing.qty || 1);
-                                if (q === 1) return null;
-                                if (q === 0) {
-                                  return (
-                                    <span
-                                      key={ing.id}
-                                      className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
-                                    >
-                                      − Sin {ing.nombre}
-                                    </span>
-                                  );
-                                }
+                        {/* 🆕 MOSTRAR PRECIO BASE */}
+                        {it.precioBase && it.precioExtras > 0 && (
+                          <div className="text-sm text-gray-500 mt-1">
+                            Precio base: ${Number(it.precioBase).toLocaleString("es-AR")}
+                          </div>
+                        )}
+
+                        {/* Chips de modificaciones */}
+                        {Array.isArray(it?.custom?.ingredients) && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {it.custom.ingredients.map((ing) => {
+                              const q = Number(ing.qty || 1);
+
+                              // Ingrediente base (no mostrar)
+                              if (q === 1) return null;
+
+                              // Ingrediente removido
+                              if (q === 0) {
                                 return (
                                   <span
                                     key={ing.id}
-                                    className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
+                                    className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
                                   >
-                                    ＋ Extra {ing.nombre}
+                                    − Sin {ing.nombre}
                                   </span>
                                 );
-                              })}
-                            </div>
-                          )}
+                              }
+
+                              // Ingrediente extra
+                              const cantidadExtra = q - 1;
+                              const precioIng = Number(ing.precio || 0);
+                              return (
+                                <span
+                                  key={ing.id}
+                                  className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
+                                >
+                                  ＋ Extra {ing.nombre}
+                                  {precioIng > 0 &&
+                                    ` (+$${(precioIng * cantidadExtra).toLocaleString("es-AR")})`}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+
                       </div>
 
                       {/* Cantidad + subtotal */}
                       <div className="text-right">
                         <div className="text-base text-gray-500">x{it.qty}</div>
+                        {/* 🆕 MOSTRAR DESGLOSE SI HAY EXTRAS */}
+                        {it.precioBase && it.precioExtras > 0 && (
+                          <div className="text-xs text-gray-500 mb-1">
+                            Base: ${Number(it.precioBase * it.qty).toLocaleString("es-AR")}<br/>
+                            Extras: +${Number(it.precioExtras * it.qty).toLocaleString("es-AR")}
+                          </div>
+                        )}
                         <div className="text-lg font-semibold">
                           ${Number(it.subtotal || 0).toLocaleString("es-AR")}
                         </div>
