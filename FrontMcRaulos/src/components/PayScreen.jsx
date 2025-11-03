@@ -50,14 +50,14 @@ function Modal({ open, title, message, type = "info", primaryText = "OK", onPrim
 
 export default function PayScreen({ onBack, onSuccess }) {
   const navigate = useNavigate(); // ← Hook de React Router
-  
+
   // --- Carrito
   const [items, setItems] = useState(() => safeRead());
-  
+
   function safeRead() {
     try { return readCart(); } catch { return []; }
   }
-  
+
   useEffect(() => {
     const refresh = () => {
       try { setItems(readCart()); } catch { setItems([]); }
@@ -75,13 +75,14 @@ export default function PayScreen({ onBack, onSuccess }) {
     () => items.reduce((acc, it) => acc + Number(it.qty ?? it.cantidad ?? 1), 0),
     [items]
   );
-  
+
   const totalARS = useMemo(
-    () => items.reduce((acc, it) => {
-      const price = Number(it.precio ?? it.price ?? 0);
-      const qty = Number(it.qty ?? it.cantidad ?? 1);
-      return acc + price * qty;
-    }, 0),
+    () =>
+      items.reduce((acc, it) => {
+        const price = Number(it.precio ?? it.price ?? 0);
+        const qty = Number(it.qty ?? it.cantidad ?? 1);
+        return acc + price * qty;
+      }, 0),
     [items]
   );
 
@@ -105,8 +106,8 @@ export default function PayScreen({ onBack, onSuccess }) {
 
   const goHome = () => {
     closeModal();
-    clearCart(); // Limpiamos el carrito
-    
+    clearCart(); // Limpiamos solo el carrito (flujo de éxito)
+
     // Pequeño delay para que el usuario vea el modal de éxito
     setTimeout(() => {
       if (typeof onSuccess === "function") {
@@ -116,10 +117,24 @@ export default function PayScreen({ onBack, onSuccess }) {
     }, 800);
   };
 
+  // === NUEVO: seguir editando (volver al menú)
+  const handleContinueEditing = () => {
+    navigate("/menu");
+  };
+
+  // === NUEVO: cancelar pedido (borrar todo y al inicio)
+  const handleCancelOrder = () => {
+    try { clearCart(); } catch {}
+    try { localStorage.clear(); } catch {}
+    // Avisar a la app que se vació el carrito
+    try { window.dispatchEvent(new Event("mcraulos:cart-updated")); } catch {}
+    navigate("/");
+  };
+
   const handleConfirmPay = async () => {
     try {
       setSubmitting(true);
-      
+
       if (items.length === 0) {
         openModal({
           type: "info",
@@ -136,21 +151,21 @@ export default function PayScreen({ onBack, onSuccess }) {
       const payload = toBackendOrderPayload(orderType);
 
       // MAPEO CORREGIDO: 1=efectivo, 2=MP, 3=tarjeta
-      const paymentMap = { 
-        efectivo: 1, 
-        mp: 2, 
-        tarjeta: 3 
+      const paymentMap = {
+        efectivo: 1,
+        mp: 2,
+        tarjeta: 3,
       };
-      
+
       const descripcionMap = {
         efectivo: "Efectivo",
         mp: "Mercado Pago",
-        tarjeta: "Tarjeta en caja"
+        tarjeta: "Tarjeta en caja",
       };
 
-      payload.pago = { 
-        id_tipo_pago: paymentMap[method] ?? 1, 
-        descripcion: descripcionMap[method]
+      payload.pago = {
+        id_tipo_pago: paymentMap[method] ?? 1,
+        descripcion: descripcionMap[method],
       };
 
       console.log("Enviando payload:", JSON.stringify(payload, null, 2));
@@ -161,22 +176,22 @@ export default function PayScreen({ onBack, onSuccess }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      
+
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
-        try { 
-          const err = await r.json(); 
-          if (err?.message) msg = err.message; 
+        try {
+          const err = await r.json();
+          if (err?.message) msg = err.message;
         } catch {}
         throw new Error(msg);
       }
-      
+
       const data = await r.json();
       const id_pedido =
-        data?.id_pedido ?? 
-        data?.data?.id_pedido ?? 
-        data?.pedido?.id ?? 
-        data?.id ?? 
+        data?.id_pedido ??
+        data?.data?.id_pedido ??
+        data?.pedido?.id ??
+        data?.id ??
         data?.data?.id;
 
       // 2) Mercado Pago: pedir link y redirigir
@@ -199,12 +214,12 @@ export default function PayScreen({ onBack, onSuccess }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id_pedido }),
         });
-        
+
         const mp = await rmp.json().catch(() => ({}));
         const init =
-          mp?.init_point ?? 
-          mp?.sandbox_init_point ?? 
-          mp?.data?.init_point ?? 
+          mp?.init_point ??
+          mp?.sandbox_init_point ??
+          mp?.data?.init_point ??
           mp?.data?.sandbox_init_point;
 
         if (init) {
@@ -237,13 +252,13 @@ export default function PayScreen({ onBack, onSuccess }) {
         onPrimary: goHome,
         onClose: goHome,
       });
-      
     } catch (e) {
       console.error(e);
       openModal({
         type: "error",
         title: "No se pudo procesar",
-        message: "Ocurrió un problema al procesar el pago.\nIntentá nuevamente o pagá en caja.",
+        message:
+          "Ocurrió un problema al procesar el pago.\nIntentá nuevamente o pagá en caja.",
         primaryText: "Entendido",
         onPrimary: closeModal,
         onClose: closeModal,
@@ -324,7 +339,26 @@ export default function PayScreen({ onBack, onSuccess }) {
           />
         </div>
 
-        <div className="mt-6">
+        {/* NUEVO: acciones secundarias */}
+        <div className="mt-6 flex flex-col md:flex-row gap-3">
+          <button
+            type="button"
+            onClick={handleContinueEditing}
+            className="w-full md:w-auto px-6 py-3 rounded-xl font-semibold bg-white border hover:bg-gray-50"
+          >
+            Seguir editando
+          </button>
+          <button
+            type="button"
+            onClick={handleCancelOrder}
+            className="w-full md:w-auto px-6 py-3 rounded-xl font-semibold bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+          >
+            Cancelar pedido
+          </button>
+        </div>
+
+        {/* Acción principal */}
+        <div className="mt-3">
           <button
             type="button"
             disabled={submitting || items.length === 0}
