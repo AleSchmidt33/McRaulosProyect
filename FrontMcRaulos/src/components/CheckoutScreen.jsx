@@ -5,16 +5,13 @@ import { goTo } from "../lib/navbus";
 
 /* ========== Helpers de agrupación (solo visual, no tocan el storage) ========== */
 const isPlainItem = (item) => {
-  // Consideramos "simple" si NO trae modificaciones
-  // En tu estructura las mods viven en custom.ingredients con qty != 1
+  // Simple si NO trae modificaciones (ni extras, ni removidos, ni notas)
   const mods = item?.custom?.ingredients ?? [];
-  const hasMods = Array.isArray(mods) && mods.some((ing) => Number(ing?.qty ?? 1) !== 1);
+  const hasMods =
+    Array.isArray(mods) && mods.some((ing) => Number(ing?.qty ?? 1) !== 1);
 
-  // Extras / removidos en otras claves (por compat)
-  const extras =
-    item?.extras ?? item?.custom?.extras ?? item?.modificaciones ?? [];
-  const removed =
-    item?.removed ?? item?.custom?.removed ?? item?.quitados ?? [];
+  const extras = item?.extras ?? item?.custom?.extras ?? item?.modificaciones ?? [];
+  const removed = item?.removed ?? item?.custom?.removed ?? item?.quitados ?? [];
   const notes = item?.notas ?? item?.nota ?? "";
 
   const hasExtras =
@@ -30,21 +27,17 @@ const buildDisplayItems = (items) => {
   const out = [];
   const indexByKey = Object.create(null);
 
-  (items || []).forEach((it, idx) => {
+  (items || []).forEach((it) => {
     const idProd = it?.producto?.id ?? it?.id ?? it?.productId ?? it?.producto_id;
-    // Precio unitario (fallback a subtotal/qty si hace falta)
-        const unitPrice = Number(it?.precio ?? 0);
-        const subtotal = Number(it.subtotal ?? unitPrice * Number(it.qty ?? 1));
-
+    const unitPrice = Number(it?.precio ?? 0);
     const qty = Number(it?.qty ?? 1);
 
     if (isPlainItem(it) && idProd != null) {
       const key = `plain|${idProd}|${unitPrice}`;
-      const found = indexByKey[key];
-      if (found != null) {
-        out[found].qty += qty;
-        // subtotal recalculado para que el render sea correcto
-        out[found].subtotal = unitPrice * out[found].qty;
+      const idx = indexByKey[key];
+      if (idx != null) {
+        out[idx].qty += qty;
+        out[idx].subtotal = unitPrice * out[idx].qty;
       } else {
         indexByKey[key] = out.length;
         out.push({
@@ -55,10 +48,7 @@ const buildDisplayItems = (items) => {
         });
       }
     } else {
-      // Con modificaciones: no se agrupa
-      const sub =
-        Number(it?.subtotal ?? 0) ||
-        unitPrice * qty;
+      const sub = Number(it?.subtotal ?? 0) || unitPrice * qty;
       out.push({ ...it, qty, subtotal: sub, groupKey: null });
     }
   });
@@ -66,6 +56,40 @@ const buildDisplayItems = (items) => {
   return out;
 };
 /* ============================================================================== */
+
+/* ======================= HELPERS de chips (coherentes con CartPanel) ======================= */
+const norm = (s = "") => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const sameName = (a, b) =>
+  norm(String(a?.nombre ?? a ?? "")) === norm(String(b?.nombre ?? b ?? ""));
+
+function isRemoval(ing, item) {
+  const q = Number(ing?.qty ?? 1);
+  if (q === 0) return true;
+
+  if (
+    ing?.removed === true ||
+    ing?.isRemoved === true ||
+    ing?.eliminado === true ||
+    ing?.accion === "quitar" ||
+    ing?.accion === "remove" ||
+    ing?.type === "removed"
+  ) {
+    return true;
+  }
+
+  const removedList = item?.removed ?? item?.custom?.removed ?? item?.quitados ?? [];
+  if (Array.isArray(removedList) && removedList.some((r) => sameName(r, ing))) {
+    return true;
+  }
+
+  return false;
+}
+
+const isChanged = (ing, item) => {
+  const q = Number(ing?.qty ?? 1);
+  return q !== 1 || isRemoval(ing, item);
+};
+/* ========================================================================================== */
 
 export default function CheckoutScreen() {
   const [items, setItems] = useState([]);
@@ -131,60 +155,57 @@ export default function CheckoutScreen() {
                           {it.nombre}
                         </div>
 
-                        {/* 🆕 MOSTRAR PRECIO BASE */}
+                        {/* Chips de modificaciones (coherentes con CartPanel) */}
+                        {Array.isArray(it?.custom?.ingredients) && it.custom.ingredients.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {it.custom.ingredients
+                              .filter((ing) => isChanged(ing, it))
+                              .map((ing, i2) => {
+                                const q = Number(ing?.qty ?? 1);
+                                if (isRemoval(ing, it)) {
+                                  return (
+                                    <span
+                                      key={ing.id ?? `${ing.nombre}-${i2}`}
+                                      className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
+                                    >
+                                      − Se removió: {ing.nombre}
+                                    </span>
+                                  );
+                                }
+                                if (q > 1) {
+                                  const precioIng = Number(ing?.precio ?? 0);
+                                  const cantidadExtra = q - 1;
+                                  return (
+                                    <span
+                                      key={ing.id ?? `${ing.nombre}-${i2}`}
+                                      className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
+                                    >
+                                      ＋ Extra {ing.nombre}
+                                      {precioIng > 0 &&
+                                        ` (+$${(precioIng * cantidadExtra).toLocaleString("es-AR")})`}
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })}
+                          </div>
+                        )}
+
+                        {/* Precio base/extra (si tu item lo trae calculado) */}
                         {it.precioBase && it.precioExtras > 0 && (
                           <div className="text-sm text-gray-500 mt-1">
                             Precio base: ${Number(it.precioBase).toLocaleString("es-AR")}
                           </div>
                         )}
-
-                        {/* Chips de modificaciones */}
-                        {Array.isArray(it?.custom?.ingredients) && (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {it.custom.ingredients.map((ing) => {
-                              const q = Number(ing.qty || 1);
-
-                              // Ingrediente base (no mostrar)
-                              if (q === 1) return null;
-
-                              // Ingrediente removido
-                              if (q === 0) {
-                                return (
-                                  <span
-                                    key={ing.id}
-                                    className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
-                                  >
-                                    − Sin {ing.nombre}
-                                  </span>
-                                );
-                              }
-
-                              // Ingrediente extra
-                              const cantidadExtra = q - 1;
-                              const precioIng = Number(ing.precio || 0);
-                              return (
-                                <span
-                                  key={ing.id}
-                                  className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
-                                >
-                                  ＋ Extra {ing.nombre}
-                                  {precioIng > 0 &&
-                                    ` (+$${(precioIng * cantidadExtra).toLocaleString("es-AR")})`}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        )}
-
                       </div>
 
                       {/* Cantidad + subtotal */}
                       <div className="text-right">
                         <div className="text-base text-gray-500">x{it.qty}</div>
-                        {/* 🆕 MOSTRAR DESGLOSE SI HAY EXTRAS */}
                         {it.precioBase && it.precioExtras > 0 && (
                           <div className="text-xs text-gray-500 mb-1">
-                            Base: ${Number(it.precioBase * it.qty).toLocaleString("es-AR")}<br/>
+                            Base: ${Number(it.precioBase * it.qty).toLocaleString("es-AR")}
+                            <br />
                             Extras: +${Number(it.precioExtras * it.qty).toLocaleString("es-AR")}
                           </div>
                         )}

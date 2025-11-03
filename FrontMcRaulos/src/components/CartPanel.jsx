@@ -1,7 +1,7 @@
 // src/components/CartPanel.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/* ======================= CONFIG STORAGE (si no pasan items por props) ======================= */
+/* ======================= CONFIG STORAGE ======================= */
 const CART_KEY = "mcraulos_cart_v1";
 const readCart = () => {
   try {
@@ -17,17 +17,25 @@ const writeCart = (items) => {
   window.dispatchEvent(new CustomEvent("cart:updated"));
 };
 
-/* ======================= AGRUPADO SOLO VISUAL (no toca storage) ======================= */
+/* ======================= AGRUPADO SOLO VISUAL ======================= */
 const isPlainItem = (item) => {
   const extras = item?.extras ?? item?.custom?.extras ?? item?.modificaciones ?? [];
   const removed = item?.removed ?? item?.custom?.removed ?? item?.quitados ?? [];
   const notes = item?.notas ?? item?.nota ?? "";
+  const ingredients = item?.custom?.ingredients ?? [];
 
-  const hasExtras  = Array.isArray(extras)  ? extras.length  > 0 : !!extras && Object.keys(extras).length  > 0;
-  const hasRemoved = Array.isArray(removed) ? removed.length > 0 : !!removed && Object.keys(removed).length > 0;
-  const hasNotes   = typeof notes === "string" ? notes.trim().length > 0 : !!notes;
+  const hasCustomIngredients =
+    Array.isArray(ingredients) &&
+    ingredients.some((ing) => Number(ing?.qty ?? 1) !== 1);
 
-  return !hasExtras && !hasRemoved && !hasNotes;
+  const hasExtras =
+    Array.isArray(extras) ? extras.length > 0 : !!extras && Object.keys(extras).length > 0;
+  const hasRemoved =
+    Array.isArray(removed) ? removed.length > 0 : !!removed && Object.keys(removed).length > 0;
+  const hasNotes =
+    typeof notes === "string" ? notes.trim().length > 0 : !!notes;
+
+  return !hasExtras && !hasRemoved && !hasCustomIngredients && !hasNotes;
 };
 
 const buildDisplayItems = (items) => {
@@ -57,8 +65,8 @@ const buildDisplayItems = (items) => {
   return out;
 };
 
-const firstIndexOf = (dispItem) => dispItem.backingIndexes[0]; // para +
-const lastIndexOf  = (dispItem) => dispItem.backingIndexes[dispItem.backingIndexes.length - 1]; // para −
+const firstIndexOf = (dispItem) => dispItem.backingIndexes[0];
+const lastIndexOf  = (dispItem) => dispItem.backingIndexes[dispItem.backingIndexes.length - 1];
 
 /* ================ Ocultar botón de carrito con exclusión del panel ================ */
 const HIDE_CART_SELECTORS = [
@@ -80,7 +88,6 @@ function hideCartButtons(panelEl) {
 
   const shouldSkip = (el) => {
     if (!panelEl) return false;
-    // no tocar nada que sea el panel, esté dentro del panel o contenga al panel
     return el === panelEl || el.contains(panelEl) || panelEl.contains(el);
   };
 
@@ -100,12 +107,10 @@ function hideCartButtons(panelEl) {
     restored.add(el);
   };
 
-  // 1) por selectores conocidos / posición típica
   if (HIDE_CART_SELECTORS) {
     document.querySelectorAll(HIDE_CART_SELECTORS).forEach(hideEl);
   }
 
-  // 2) por TEXTO “carrito” pero SOLO si es button/a y está fijo o sticky
   const candidates = document.querySelectorAll("button, a");
   candidates.forEach((el) => {
     if (restored.has(el) || shouldSkip(el)) return;
@@ -115,7 +120,6 @@ function hideCartButtons(panelEl) {
     if (pos === "fixed" || pos === "sticky") hideEl(el);
   });
 
-  // función de restauración al cerrar el panel
   return () => {
     restored.forEach((el) => {
       try {
@@ -130,14 +134,38 @@ function hideCartButtons(panelEl) {
   };
 }
 
+/* ======================= HELPERS de chips ======================= */
+const sameName = (a, b) => norm(String(a?.nombre ?? a ?? "")) === norm(String(b?.nombre ?? b ?? ""));
+
+function isRemoval(ing, item) {
+  const q = Number(ing?.qty ?? 1);
+  if (q === 0) return true;
+
+  if (
+    ing?.removed === true ||
+    ing?.isRemoved === true ||
+    ing?.eliminado === true ||
+    ing?.accion === "quitar" ||
+    ing?.accion === "remove" ||
+    ing?.type === "removed"
+  ) {
+    return true;
+  }
+
+  const removedList = item?.removed ?? item?.custom?.removed ?? item?.quitados ?? [];
+  if (Array.isArray(removedList) && removedList.some((r) => sameName(r, ing))) {
+    return true;
+  }
+
+  return false;
+}
+
+const isChanged = (ing, item) => {
+  const q = Number(ing?.qty ?? 1);
+  return q !== 1 || isRemoval(ing, item);
+};
+
 /* ====================================== COMPONENTE ====================================== */
-/**
- * Props compatibles:
- *  - Visibilidad: isOpen | open | visible | show | isCartOpen | opened
- *  - onClose()
- *  - items? (opcional). Si no lo pasás, el panel usa localStorage.
- *  - onAdd(index)?, onSub(index)?, onRemove(index)?, onClear()?, onGoCheckout? / onCheckout? / onPay? / onConfirm?
- */
 export default function CartPanel(props) {
   const {
     onClose,
@@ -149,7 +177,7 @@ export default function CartPanel(props) {
     onCheckout,
     onPay,
     onConfirm,
-    items: itemsFromProps, // opcional
+    items: itemsFromProps,
   } = props;
 
   const isVisible = !!(
@@ -161,25 +189,21 @@ export default function CartPanel(props) {
     props.opened
   );
 
-  // Ref del contenedor del panel (para no ocultar nada suyo ni sus padres)
   const panelRef = useRef(null);
 
-  // Fuente de verdad de items (hooks siempre en el mismo orden)
   const [itemsLS, setItemsLS] = useState(() => (itemsFromProps ? [] : readCart()));
   useEffect(() => {
     if (itemsFromProps) return;
     const sync = () => setItemsLS(readCart());
     window.addEventListener("storage", sync);
     window.addEventListener("cart:updated", sync);
-    if (isVisible) sync(); // refresca al abrir
+    if (isVisible) sync();
     return () => {
       window.removeEventListener("storage", sync);
       window.removeEventListener("cart:updated", sync);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemsFromProps, isVisible]);
 
-  // Ocultar botón Carrito SOLO cuando está visible (y sin tocar el panel)
   useEffect(() => {
     if (!isVisible) return;
     const restore = hideCartButtons(panelRef.current);
@@ -250,7 +274,6 @@ export default function CartPanel(props) {
 
   if (!isVisible) return null;
 
-  /* ======================================== UI ======================================== */
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/40">
       <div
@@ -279,100 +302,71 @@ export default function CartPanel(props) {
               const precioUnit = Number(p?.precio ?? p?.producto?.precio ?? 0);
               const subtotal   = precioUnit * Number(p.qty ?? 1);
 
-              const showMods = !isPlainItem(p);
-              const modsText = (() => {
-                if (!showMods) return "";
-                const extras  = p?.extras  ?? p?.custom?.extras  ?? p?.modificaciones ?? [];
-                const removed = p?.removed ?? p?.custom?.removed ?? p?.quitados ?? [];
-                const parts = [];
-                if (Array.isArray(extras)  && extras.length)  parts.push(`＋ ${extras.map((e) => e?.nombre ?? e).join(", ")}`);
-                if (Array.isArray(removed) && removed.length) parts.push(`− ${removed.map((r) => r?.nombre ?? r).join(", ")}`);
-                return parts.join(" | ");
-              })();
-
               const idxMas    = firstIndexOf(p);
               const idxMenos  = lastIndexOf(p);
               const idxQuitar = firstIndexOf(p);
 
               return (
                 <div key={`${p.groupKey ?? "single"}-${i}`} className="border rounded-xl p-4 flex items-start justify-between">
-                      <div className="min-w-0">
-                        <div className="font-semibold">{nombre}</div>
-                        
-                        {/* 🆕 Mostrar precio base si hay extras */}
-                        {p.precioBase && p.precioExtras > 0 && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            Base: ${Number(p.precioBase * p.qty).toLocaleString("es-AR")} 
-                            + Extras: ${Number(p.precioExtras * p.qty).toLocaleString("es-AR")}
-                          </div>
-                        )}
-                        
-{/* 🧩 Mostrar ingredientes agregados o removidos */}
-{(() => {
-  const custom = p?.custom ?? p?.producto?.custom ?? {};
-  const ingredients = custom?.ingredients ?? [];
+                  <div className="min-w-0">
+                    <div className="font-semibold">{nombre}</div>
 
-  if (!Array.isArray(ingredients) || !ingredients.length) {
-    // Fallback: si no hay ingredientes personalizados, mostrar modsText viejo
-    return showMods && modsText ? (
-      <div className="text-sm text-gray-500 mt-1">{modsText}</div>
-    ) : null;
-  }
+                    {/* Chips de modificaciones (solo cambios reales) */}
+                    {(() => {
+                      const custom = p?.custom ?? p?.producto?.custom ?? {};
+                      const ingredients = custom?.ingredients ?? [];
+                      if (!Array.isArray(ingredients) || !ingredients.length) return null;
 
-  const hasMods = ingredients.some((ing) => Number(ing?.qty ?? 1) !== 1);
-  if (!hasMods) {
-    return showMods && modsText ? (
-      <div className="text-sm text-gray-500 mt-1">{modsText}</div>
-    ) : null;
-  }
+                      const chips = ingredients
+                        .filter((ing) => isChanged(ing, p))
+                        .map((ing, idxChip) => {
+                          const q = Number(ing?.qty ?? 1);
+                          const removal = isRemoval(ing, p);
 
-  return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {ingredients.map((ing) => {
-        const q = Number(ing.qty || 1);
+                          if (removal) {
+                            return (
+                              <span
+                                key={ing.id ?? `${ing.nombre}-${idxChip}`}
+                                className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
+                              >
+                                − Se removió: {ing.nombre}
+                              </span>
+                            );
+                          }
 
-        // Sin cambios → no mostrar
-        if (q === 1) return null;
+                          if (q > 1) {
+                            const precioIng = Number(ing?.precio ?? 0);
+                            const cantidadExtra = q - 1;
+                            return (
+                              <span
+                                key={ing.id ?? `${ing.nombre}-${idxChip}`}
+                                className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
+                              >
+                                ＋ Extra {ing.nombre}
+                                {precioIng > 0 &&
+                                  ` (+$${(precioIng * cantidadExtra).toLocaleString("es-AR")})`}
+                              </span>
+                            );
+                          }
 
-        // Ingrediente removido
-        if (q === 0) {
-          return (
-            <span
-              key={ing.id}
-              className="rounded-full bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
-            >
-              − Sin {ing.nombre}
-            </span>
-          );
-        }
+                          return null; // no cambio
+                        });
 
-        // Ingrediente extra
-        const cantidadExtra = q - 1;
-        const precioIng = Number(ing.precio || 0);
-        return (
-          <span
-            key={ing.id}
-            className="rounded-full bg-green-50 px-3 py-1 text-sm font-medium text-green-700"
-          >
-            ＋ Extra {ing.nombre}
-            {precioIng > 0 &&
-              ` (+$${(precioIng * cantidadExtra).toLocaleString("es-AR")})`}
-          </span>
-        );
-      })}
-    </div>
-  );
-})()}
-                        
-                        <div className="text-sm text-gray-500 mt-1">
-                          Precio unitario: {precioUnit.toLocaleString("es-AR", {
-                            style: "currency",
-                            currency: "ARS",
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 0,
-                          })}
-                        </div>
-                      </div>
+                      return chips.length ? (
+                        <div className="mt-2 flex flex-wrap gap-2">{chips}</div>
+                      ) : null;
+                    })()}
+
+                    <div className="text-sm text-gray-500 mt-1">
+                      Precio unitario:{" "}
+                      {precioUnit.toLocaleString("es-AR", {
+                        style: "currency",
+                        currency: "ARS",
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 0,
+                      })}
+                    </div>
+                  </div>
 
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
