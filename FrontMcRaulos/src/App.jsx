@@ -13,7 +13,7 @@ import CartPanel from "./components/CartPanel.jsx";
 import CartButton from "./components/CartButton.jsx";
 
 import { goTo } from "./lib/navbus"; // util de navegación sin hooks
-
+const QR_SRC = new URL("../assets/fake_qr.png", import.meta.url).href;
 export default function App() {
   const [cartOpen, setCartOpen] = useState(false);
 
