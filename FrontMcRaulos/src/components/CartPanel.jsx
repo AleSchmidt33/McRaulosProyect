@@ -1,174 +1,361 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  readCart,
-  updateQty,
-  removeItem,
-  clearCart,
-  getCartTotal,
-} from "../lib/cart";
-import { goTo } from "../lib/navbus";
+// src/components/CartPanel.jsx
+import { useEffect, useMemo, useRef, useState } from "react";
 
-export default function CartPanel({ open, onClose }) {
-  const [items, setItems] = useState([]);
+/* ======================= CONFIG STORAGE (si no pasan items por props) ======================= */
+const CART_KEY = "mcraulos_cart_v1";
+const readCart = () => {
+  try {
+    const raw = localStorage.getItem(CART_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+const writeCart = (items) => {
+  localStorage.setItem(CART_KEY, JSON.stringify(items ?? []));
+  window.dispatchEvent(new CustomEvent("cart:updated"));
+};
 
-  // Carga / escucha cambios del carrito
-  useEffect(() => {
-    const load = () => setItems(readCart());
-    load();
-    const handler = () => load();
-    window.addEventListener("storage", handler);
-    window.addEventListener("mcraulos:cart-changed", handler);
-    return () => {
-      window.removeEventListener("storage", handler);
-      window.removeEventListener("mcraulos:cart-changed", handler);
+/* ======================= AGRUPADO SOLO VISUAL (no toca storage) ======================= */
+const isPlainItem = (item) => {
+  const extras = item?.extras ?? item?.custom?.extras ?? item?.modificaciones ?? [];
+  const removed = item?.removed ?? item?.custom?.removed ?? item?.quitados ?? [];
+  const notes = item?.notas ?? item?.nota ?? "";
+
+  const hasExtras  = Array.isArray(extras)  ? extras.length  > 0 : !!extras && Object.keys(extras).length  > 0;
+  const hasRemoved = Array.isArray(removed) ? removed.length > 0 : !!removed && Object.keys(removed).length > 0;
+  const hasNotes   = typeof notes === "string" ? notes.trim().length > 0 : !!notes;
+
+  return !hasExtras && !hasRemoved && !hasNotes;
+};
+
+const buildDisplayItems = (items) => {
+  const out = [];
+  const indexByKey = Object.create(null);
+
+  (items || []).forEach((it, idx) => {
+    const idProd = it?.producto?.id ?? it?.id ?? it?.productId ?? it?.producto_id;
+    const price  = Number(it?.precio ?? it?.producto?.precio ?? 0);
+    const qty    = Number(it?.qty ?? 1);
+
+    if (isPlainItem(it) && idProd != null) {
+      const key = `plain|${idProd}|${price}`;
+      const found = indexByKey[key];
+      if (found != null) {
+        out[found].qty += qty;
+        out[found].backingIndexes.push(idx);
+      } else {
+        indexByKey[key] = out.length;
+        out.push({ ...it, qty, groupKey: key, backingIndexes: [idx] });
+      }
+    } else {
+      out.push({ ...it, qty, groupKey: null, backingIndexes: [idx] });
+    }
+  });
+
+  return out;
+};
+
+const firstIndexOf = (dispItem) => dispItem.backingIndexes[0]; // para +
+const lastIndexOf  = (dispItem) => dispItem.backingIndexes[dispItem.backingIndexes.length - 1]; // para −
+
+/* ================ Ocultar botón de carrito con exclusión del panel ================ */
+const HIDE_CART_SELECTORS = [
+  ".cart-fab",
+  "#cart-btn",
+  ".CartButton",
+  ".cart-button",
+  "#CartButton",
+  '[data-cart-button="true"]',
+  "button.fixed.right-4.bottom-4",
+  "a.fixed.right-4.bottom-4",
+].join(",");
+
+const norm = (s = "") =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+function hideCartButtons(panelEl) {
+  const restored = new Set();
+
+  const shouldSkip = (el) => {
+    if (!panelEl) return false;
+    // no tocar nada que sea el panel, esté dentro del panel o contenga al panel
+    return el === panelEl || el.contains(panelEl) || panelEl.contains(el);
+  };
+
+  const hideEl = (el) => {
+    if (!el || restored.has(el) || shouldSkip(el)) return;
+    const prev = {
+      display: el.style.display,
+      pointerEvents: el.style.pointerEvents,
+      visibility: el.style.visibility,
+      opacity: el.style.opacity,
     };
-  }, []);
+    el.dataset._cartPrev = JSON.stringify(prev);
+    el.style.display = "none";
+    el.style.pointerEvents = "none";
+    el.style.visibility = "hidden";
+    el.style.opacity = "0";
+    restored.add(el);
+  };
 
-  // Ocultar botón carrito cuando el panel está abierto
+  // 1) por selectores conocidos / posición típica
+  if (HIDE_CART_SELECTORS) {
+    document.querySelectorAll(HIDE_CART_SELECTORS).forEach(hideEl);
+  }
+
+  // 2) por TEXTO “carrito” pero SOLO si es button/a y está fijo o sticky
+  const candidates = document.querySelectorAll("button, a");
+  candidates.forEach((el) => {
+    if (restored.has(el) || shouldSkip(el)) return;
+    const t = norm(el.textContent || "");
+    if (!t.includes("carrito")) return;
+    const pos = window.getComputedStyle(el).position;
+    if (pos === "fixed" || pos === "sticky") hideEl(el);
+  });
+
+  // función de restauración al cerrar el panel
+  return () => {
+    restored.forEach((el) => {
+      try {
+        const prev = el.dataset._cartPrev ? JSON.parse(el.dataset._cartPrev) : {};
+        el.style.display = prev.display ?? "";
+        el.style.pointerEvents = prev.pointerEvents ?? "";
+        el.style.visibility = prev.visibility ?? "";
+        el.style.opacity = prev.opacity ?? "";
+        delete el.dataset._cartPrev;
+      } catch {}
+    });
+  };
+}
+
+/* ====================================== COMPONENTE ====================================== */
+/**
+ * Props compatibles:
+ *  - Visibilidad: isOpen | open | visible | show | isCartOpen | opened
+ *  - onClose()
+ *  - items? (opcional). Si no lo pasás, el panel usa localStorage.
+ *  - onAdd(index)?, onSub(index)?, onRemove(index)?, onClear()?, onGoCheckout? / onCheckout? / onPay? / onConfirm?
+ */
+export default function CartPanel(props) {
+  const {
+    onClose,
+    onAdd,
+    onSub,
+    onRemove,
+    onClear,
+    onGoCheckout,
+    onCheckout,
+    onPay,
+    onConfirm,
+    items: itemsFromProps, // opcional
+  } = props;
+
+  const isVisible = !!(
+    props.isOpen ??
+    props.open ??
+    props.visible ??
+    props.show ??
+    props.isCartOpen ??
+    props.opened
+  );
+
+  // Ref del contenedor del panel (para no ocultar nada suyo ni sus padres)
+  const panelRef = useRef(null);
+
+  // Fuente de verdad de items (hooks siempre en el mismo orden)
+  const [itemsLS, setItemsLS] = useState(() => (itemsFromProps ? [] : readCart()));
   useEffect(() => {
-    const cls = "cart-open";
-    const flag = typeof open === "boolean" ? open : true;
-    if (flag) document.body.classList.add(cls);
-    else document.body.classList.remove(cls);
-    return () => document.body.classList.remove(cls);
-  }, [open]);
+    if (itemsFromProps) return;
+    const sync = () => setItemsLS(readCart());
+    window.addEventListener("storage", sync);
+    window.addEventListener("cart:updated", sync);
+    if (isVisible) sync(); // refresca al abrir
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("cart:updated", sync);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsFromProps, isVisible]);
 
-  const total = useMemo(() => getCartTotal(), [items]);
+  // Ocultar botón Carrito SOLO cuando está visible (y sin tocar el panel)
+  useEffect(() => {
+    if (!isVisible) return;
+    const restore = hideCartButtons(panelRef.current);
+    return () => restore();
+  }, [isVisible]);
 
-  const onInc = (uid) => {
-    const item = items.find((x) => x.uid === uid);
-    if (!item) return;
-    updateQty(uid, Number(item.qty || 1) + 1);
-    setItems(readCart());
+  const items = itemsFromProps ?? itemsLS;
+
+  const displayItems = useMemo(() => buildDisplayItems(items), [items]);
+
+  const total = useMemo(() => {
+    return (items || []).reduce((acc, it) => {
+      const price = Number(it?.precio ?? it?.producto?.precio ?? 0);
+      const qty = Number(it?.qty ?? 1);
+      return acc + price * qty;
+    }, 0);
+  }, [items]);
+
+  const doAdd = (idx) => {
+    if (onAdd) return onAdd(idx);
+    const arr = readCart();
+    if (arr[idx]) {
+      arr[idx].qty = Number(arr[idx].qty ?? 1) + 1;
+      writeCart(arr);
+      setItemsLS(arr);
+    }
+  };
+  const doSub = (idx) => {
+    if (onSub) return onSub(idx);
+    const arr = readCart();
+    if (arr[idx]) {
+      const next = Number(arr[idx].qty ?? 1) - 1;
+      if (next <= 0) arr.splice(idx, 1);
+      else arr[idx].qty = next;
+      writeCart(arr);
+      setItemsLS(arr);
+    }
+  };
+  const doRemove = (idx) => {
+    if (onRemove) return onRemove(idx);
+    const arr = readCart();
+    if (arr[idx]) {
+      arr.splice(idx, 1);
+      writeCart(arr);
+      setItemsLS(arr);
+    }
+  };
+  const doClear = () => {
+    if (onClear) return onClear();
+    writeCart([]);
+    setItemsLS([]);
   };
 
-  const onDec = (uid) => {
-    const item = items.find((x) => x.uid === uid);
-    if (!item) return;
-    const next = Math.max(1, Number(item.qty || 1) - 1);
-    updateQty(uid, next);
-    setItems(readCart());
+  const handleGoCheckout = () => {
+    const handler = onGoCheckout || onCheckout || onPay || onConfirm || null;
+    if (handler) {
+      handler();
+      onClose?.();
+      return;
+    }
+    try {
+      const href = String(window.location.href);
+      if (href.includes("#")) window.location.hash = "#/checkout";
+      else window.location.href = "/checkout";
+    } catch {}
+    onClose?.();
   };
 
-  const onRemove = (uid) => {
-    removeItem(uid);
-    setItems(readCart());
-  };
+  if (!isVisible) return null;
 
-  const onClear = () => {
-    clearCart();
-    setItems(readCart());
-  };
-
-  // 👇 ESTE es el “terminar pedido”
-  const goCheckout = () => {
-    onClose?.();                 // cierra el panel
-    setTimeout(() => goTo("/checkout"), 0);  // navega al resumen
-  };
-
+  /* ======================================== UI ======================================== */
   return (
-    <div className={`fixed inset-0 z-[9998] ${open ? "block" : "hidden"}`} aria-hidden={!open}>
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50" onClick={() => onClose?.()} />
-
-      {/* Panel */}
-      <div className="absolute right-0 top-0 h-full w-full max-w-[480px] overflow-hidden rounded-l-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/40">
+      <div
+        ref={panelRef}
+        className="w-full max-w-[560px] h-full bg-white rounded-l-2xl shadow-xl flex flex-col"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h3 className="text-lg font-semibold">Tu pedido</h3>
+        <div className="px-6 py-5 border-b flex items-center justify-between">
+          <h2 className="text-2xl font-semibold">Tu pedido</h2>
           <button
-            className="rounded-full p-2 text-gray-500 hover:bg-gray-100"
-            onClick={() => onClose?.()}
+            onClick={onClose}
+            className="p-2 rounded-full hover:bg-gray-100"
             aria-label="Cerrar"
           >
             ✕
           </button>
         </div>
 
-        {/* Lista */}
-        <div className="flex h-[calc(100%-180px)] flex-col gap-3 overflow-y-auto px-5 py-4">
-          {items.length === 0 && (
-            <div className="py-12 text-center text-sm text-gray-500">
-              Aún no agregaste productos.
-            </div>
-          )}
+        {/* Items */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {displayItems.length === 0 ? (
+            <div className="text-gray-500 text-center py-20">Tu carrito está vacío.</div>
+          ) : (
+            displayItems.map((p, i) => {
+              const nombre     = p?.nombre ?? p?.producto?.nombre ?? "Producto";
+              const precioUnit = Number(p?.precio ?? p?.producto?.precio ?? 0);
+              const subtotal   = precioUnit * Number(p.qty ?? 1);
 
-          {items.map((it) => (
-            <div key={it.uid} className="rounded-2xl border px-4 py-3 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold">{it.nombre}</div>
-                  {it?.custom?.ingredients?.length > 0 && (
-                    <ul className="mt-1 text-xs text-gray-600">
-                      {it.custom.ingredients.map((ing) => {
-                        const q = Number(ing.qty || 1);
-                        if (q === 1) return null;
-                        if (q === 0) return <li key={ing.id}>− Sin {ing.nombre}</li>;
-                        return <li key={ing.id}>＋ Extra {ing.nombre}</li>;
+              const showMods = !isPlainItem(p);
+              const modsText = (() => {
+                if (!showMods) return "";
+                const extras  = p?.extras  ?? p?.custom?.extras  ?? p?.modificaciones ?? [];
+                const removed = p?.removed ?? p?.custom?.removed ?? p?.quitados       ?? [];
+                const parts = [];
+                if (Array.isArray(extras)  && extras.length)  parts.push(`＋ ${extras.map((e) => e?.nombre ?? e).join(", ")}`);
+                if (Array.isArray(removed) && removed.length) parts.push(`− ${removed.map((r) => r?.nombre ?? r).join(", ")}`);
+                return parts.join(" | ");
+              })();
+
+              const idxMas    = firstIndexOf(p);
+              const idxMenos  = lastIndexOf(p);
+              const idxQuitar = firstIndexOf(p);
+
+              return (
+                <div key={`${p.groupKey ?? "single"}-${i}`} className="border rounded-xl p-4 flex items-start justify-between">
+                  <div className="min-w-0">
+                    <div className="font-semibold">{nombre}</div>
+                    {showMods && modsText && <div className="text-sm text-gray-500 mt-1">{modsText}</div>}
+                    <div className="text-sm text-gray-500 mt-1">
+                      {precioUnit.toLocaleString("es-AR", {
+                        style: "currency",
+                        currency: "ARS",
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 0,
                       })}
-                    </ul>
-                  )}
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold">
-                    ${Number(it.subtotal || 0).toLocaleString("es-AR")}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => doSub(idxMenos)} className="w-9 h-9 rounded-full border flex items-center justify-center hover:bg-gray-50">−</button>
+                      <span className="w-5 text-center">{p.qty}</span>
+                      <button onClick={() => doAdd(idxMas)} className="w-9 h-9 rounded-full border flex items-center justify-center hover:bg-gray-50">+</button>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="font-semibold">
+                        {subtotal.toLocaleString("es-AR", {
+                          style: "currency",
+                          currency: "ARS",
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 0,
+                        })}
+                      </div>
+                      <button onClick={() => doRemove(idxQuitar)} className="text-sm text-gray-500 hover:text-gray-700 mt-1">
+                        Quitar
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              {/* Controles */}
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <button
-                    className="h-8 w-8 rounded-full border text-lg leading-8 hover:bg-gray-50"
-                    onClick={() => onDec(it.uid)}
-                  >
-                    −
-                  </button>
-                  <div className="min-w-[2.5rem] text-center text-sm font-medium">
-                    {it.qty}
-                  </div>
-                  <button
-                    className="h-8 w-8 rounded-full border text-lg leading-8 hover:bg-gray-50"
-                    onClick={() => onInc(it.uid)}
-                  >
-                    +
-                  </button>
-                </div>
-
-                <button
-                  className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-200"
-                  onClick={() => onRemove(it.uid)}
-                >
-                  Quitar
-                </button>
-              </div>
-            </div>
-          ))}
+              );
+            })
+          )}
         </div>
 
         {/* Footer */}
-        <div className="border-t px-5 py-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-sm text-gray-600">Total</span>
-            <span className="text-lg font-semibold">
-              ${Number(total).toLocaleString("es-AR")}
-            </span>
+        <div className="px-6 py-4 border-t">
+          <div className="flex items-center justify-between">
+            <div className="text-gray-600">Total</div>
+            <div className="text-xl font-bold">
+              {total.toLocaleString("es-AR", {
+                style: "currency",
+                currency: "ARS",
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0,
+              })}
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              className="rounded-xl border px-4 py-2 text-sm hover:bg-gray-50"
-              onClick={onClear}
-            >
+          <div className="mt-4 flex items-center gap-3">
+            <button onClick={doClear} className="px-4 h-11 rounded-xl border bg-white hover:bg-gray-50">
               Vaciar
             </button>
-            {/* 👇 Botón “Terminar pedido” usa goCheckout */}
-            <button
-              className="flex-1 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-              onClick={goCheckout}
-              disabled={items.length === 0}
-            >
+
+            <button onClick={handleGoCheckout} className="flex-1 h-11 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700">
               Terminar pedido
             </button>
           </div>
