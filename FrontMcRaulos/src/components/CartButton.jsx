@@ -1,64 +1,89 @@
 // src/components/CartButton.jsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import * as cartLib from "../lib/cart";
+import { readCart as readCartExport } from "../lib/cart";
 
-// Helpers de acceso seguro
-const readCartFn = typeof cartLib.readCart === "function" ? cartLib.readCart : null;
-const countItemsFn = typeof cartLib.countItems === "function" ? cartLib.countItems : null;
+const LS_KEY = "mcraulos_cart_v1";
 
-// Normaliza la cantidad desde diferentes claves
-function getItemQty(it) {
+function getQty(it) {
   const v = it?.qty ?? it?.cantidad ?? it?.quantity ?? it?.cant ?? 1;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
+function getCartItemsSafe() {
+  try {
+    if (typeof readCartExport === "function") {
+      const c = readCartExport();
+      if (Array.isArray(c)) return c;
+      if (c && Array.isArray(c.items)) return c.items;
+    }
+  } catch {}
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && Array.isArray(parsed.items)) return parsed.items;
+  } catch {}
+  return [];
+}
+
 export default function CartButton({ onClick, className = "" }) {
   const location = useLocation();
 
-  // Rutas donde escondemos el botón (manteniendo orden de hooks)
   const HIDE_ON = useMemo(() => new Set(["/checkout", "/pay", "/pago"]), []);
   const hidden = useMemo(() => HIDE_ON.has(location.pathname), [HIDE_ON, location.pathname]);
 
-  // Conteo robusto: usa countItems() si existe; si no, suma cantidades del carrito
-  const safeCount = useCallback(() => {
+  const computeCount = useCallback(() => {
     try {
-      if (countItemsFn) {
-        const k = Number(countItemsFn());
-        if (Number.isFinite(k)) return k;
-      }
-      if (readCartFn) {
-        const items = readCartFn() || [];
-        return items.reduce((acc, it) => acc + getItemQty(it), 0);
-      }
-    } catch {}
-    return 0;
+      const items = getCartItemsSafe();
+      return items.reduce((acc, it) => acc + getQty(it), 0);
+    } catch {
+      return 0;
+    }
   }, []);
 
-  const [count, setCount] = useState(() => safeCount());
+  const [count, setCount] = useState(() => computeCount());
+  const lastCountRef = useRef(count);
 
   useEffect(() => {
-    const refresh = () => setCount(safeCount());
+    const refresh = () => {
+      const k = computeCount();
+      if (k !== lastCountRef.current) {
+        lastCountRef.current = k;
+        setCount(k);
+      }
+    };
+
+    // 1) Refresco inmediato
     refresh();
 
-    window.addEventListener("cart:update", refresh);
-    window.addEventListener("mcraulos:cart-updated", refresh);
-    window.addEventListener("storage", refresh);
+    // 2) Eventos “propios” del proyecto
+    const onUpdate = () => refresh();
+    window.addEventListener("cart:update", onUpdate);
+    window.addEventListener("cart:changed", onUpdate);
+    window.addEventListener("mcraulos:cart-updated", onUpdate);
+
+    // 3) Eventos del navegador útiles
+    window.addEventListener("visibilitychange", onUpdate);
+    window.addEventListener("focus", onUpdate);
+
+    // 4) Polling suave como red de seguridad (cada 400 ms)
+    const iv = setInterval(refresh, 400);
 
     return () => {
-      window.removeEventListener("cart:update", refresh);
-      window.removeEventListener("mcraulos:cart-updated", refresh);
-      window.removeEventListener("storage", refresh);
+      window.removeEventListener("cart:update", onUpdate);
+      window.removeEventListener("cart:changed", onUpdate);
+      window.removeEventListener("mcraulos:cart-updated", onUpdate);
+      window.removeEventListener("visibilitychange", onUpdate);
+      window.removeEventListener("focus", onUpdate);
+      clearInterval(iv);
     };
-  }, [safeCount]);
+  }, [computeCount]);
 
   const handleOpen = () => {
-    if (typeof onClick === "function") {
-      onClick();
-      return;
-    }
-    // Fallbacks compatibles con tu proyecto
+    if (typeof onClick === "function") return onClick();
     try { window.dispatchEvent(new Event("cart:open")); } catch {}
     try { window.dispatchEvent(new Event("cart:toggle")); } catch {}
     try { window.dispatchEvent(new Event("mcraulos:cart-open")); } catch {}
@@ -78,7 +103,7 @@ export default function CartButton({ onClick, className = "" }) {
         "bg-yellow-400 text-gray-900 border border-yellow-300 shadow-xl",
         "hover:bg-yellow-500 active:scale-95 transition",
         "flex items-center gap-2",
-        className
+        className,
       ].join(" ")}
     >
       <span className="text-lg">🛒</span>
@@ -88,7 +113,7 @@ export default function CartButton({ onClick, className = "" }) {
           "ml-1 min-w-6 h-6 px-2",
           "inline-flex items-center justify-center",
           "rounded-full text-sm font-bold",
-          "bg-white text-gray-900 border border-yellow-300"
+          "bg-white text-gray-900 border border-yellow-300",
         ].join(" ")}
       >
         {count}
